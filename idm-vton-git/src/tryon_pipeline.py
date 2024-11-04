@@ -966,6 +966,7 @@ class StableDiffusionXLInpaintPipeline(
         return add_time_ids, add_neg_time_ids
 
     # Copied from diffusers.pipelines.stable_diffusion.pipeline_stable_diffusion_upscale.StableDiffusionUpscalePipeline.upcast_vae
+    # 현재의 data type을 저장한 상태로, VAE 전체를 float로 변경하여 메모리 사용량 최적화하는 함수. Attention 블록에 대한 최적화 함수라고 생각하면 될듯?
     def upcast_vae(self):
         dtype = self.vae.dtype
         self.vae.to(dtype=torch.float32)
@@ -986,6 +987,7 @@ class StableDiffusionXLInpaintPipeline(
             self.vae.decoder.mid_block.to(dtype)
 
     # Copied from diffusers.pipelines.stable_diffusion.pipeline_stable_diffusion.StableDiffusionPipeline.enable_freeu
+    # Unet에서의 Feature Saturation 문제를 해결하기 위한 FreeU 구조를 활성화시키는 함수
     def enable_freeu(self, s1: float, s2: float, b1: float, b2: float):
         r"""Enables the FreeU mechanism as in https://arxiv.org/abs/2309.11497.
 
@@ -1009,11 +1011,13 @@ class StableDiffusionXLInpaintPipeline(
         self.unet.enable_freeu(s1=s1, s2=s2, b1=b1, b2=b2)
 
     # Copied from diffusers.pipelines.stable_diffusion.pipeline_stable_diffusion.StableDiffusionPipeline.disable_freeu
+    # Unet에서의 Feature Saturation 문제를 해결하기 위한 FreeU 구조를 비활성화시키는 함수
     def disable_freeu(self):
         """Disables the FreeU mechanism if enabled."""
         self.unet.disable_freeu()
 
     # Copied from diffusers.pipelines.stable_diffusion_xl.pipeline_stable_diffusion_xl.StableDiffusionXLPipeline.fuse_qkv_projections
+    # Attention Module에서 Query, Key, Value를 하나로 뭉쳐서 사용하게 된다.
     def fuse_qkv_projections(self, unet: bool = True, vae: bool = True):
         """
         Enables fused QKV projections. For self-attention modules, all projection matrices (i.e., query,
@@ -1046,6 +1050,7 @@ class StableDiffusionXLInpaintPipeline(
             self.vae.set_attn_processor(FusedAttnProcessor2_0())
 
     # Copied from diffusers.pipelines.stable_diffusion_xl.pipeline_stable_diffusion_xl.StableDiffusionXLPipeline.unfuse_qkv_projections
+    # Attention Module에서 뭉쳐 놓은 Query, Key, Value 쌍에 대해서 다시 각각 사용하기 위해 합친 것을 풀어주는 함수.
     def unfuse_qkv_projections(self, unet: bool = True, vae: bool = True):
         """Disable QKV projection fusion if enabled.
 
@@ -1075,6 +1080,9 @@ class StableDiffusionXLInpaintPipeline(
                 self.fusing_vae = False
 
     # Copied from diffusers.pipelines.latent_consistency_models.pipeline_latent_consistency_text2img.LatentConsistencyModelPipeline.get_guidance_scale_embedding
+    # 임베딩 벡터를 생성하기 위한 함수. Guidance를 생성하기 위해 사용된다.
+    # w가 입력 텐서로 사용 / embedding_dim, dtype은 생성되는 임베딩 벡터에 대한 설명이다.
+    # 결과는 이를 통해서 생성된 임베딩 벡터. 여기에는 timesteps가 같이 포함되어 반환된다.
     def get_guidance_scale_embedding(self, w, embedding_dim=512, dtype=torch.float32):
         """
         See https://github.com/google-research/vdm/blob/dc27b98a554f65cdc654b800da5aa1846545d41b/model_vdm.py#L298
