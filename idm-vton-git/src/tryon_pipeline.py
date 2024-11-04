@@ -271,6 +271,10 @@ class StableDiffusionXLInpaintPipeline(
         super().__init__()
 
         self.register_modules(
+            #CLIPTextModel vs CLIPTextModelwithProjection
+            #CLIPTextModel은 텍스트를 CLIP 모델이 이해할 수 있는 잠재 벡터로 인코딩하는 역할을 하는거
+            #텍스트로 이미지를 diffusion하는 모델에서 텍스트와 이미지를 비교하기 위해서 텍스트와 이미지를 비교하기 위해서 이미지와 텍스트를 비교가능한 차원으로 옮겨주어야함
+            #그래서 CLIPTextModelwithProjection는 선형변환을 이용해서 텍스트를 이미지와 같은 공간으로 투영시키는 모델
             vae=vae,
             text_encoder=text_encoder,
             text_encoder_2=text_encoder_2,
@@ -547,20 +551,26 @@ class StableDiffusionXLInpaintPipeline(
 
             negative_prompt_embeds = torch.concat(negative_prompt_embeds_list, dim=-1)#마지막차원에 모든레이어의 출력을 추가해줌
 
-            #init용
+
 
         if self.text_encoder_2 is not None:
+            #프롬프트임베딩의 타입을 text_encoder의 input타입으로 맞춰줌
             prompt_embeds = prompt_embeds.to(dtype=self.text_encoder_2.dtype, device=device)
         else:
+            #text_encoder_2가 없으면 diffusion의 unet의 데이터타입으로 프롬프트임베딩 타입을 변경해줌
             prompt_embeds = prompt_embeds.to(dtype=self.unet.dtype, device=device)
 
+        #bs_embed = 배치사이즈로 프롬프트개수, seq_len = 각 프롬프트가 토큰화 되었을때 그 토큰화된 길이 
         bs_embed, seq_len, _ = prompt_embeds.shape
-        # duplicate text embeddings for each generation per prompt, using mps friendly method
-        prompt_embeds = prompt_embeds.repeat(1, num_images_per_prompt, 1)
-        prompt_embeds = prompt_embeds.view(bs_embed * num_images_per_prompt, seq_len, -1)
 
+        # duplicate text embeddings for each generation per prompt, using mps friendly method
+        #
+        prompt_embeds = prompt_embeds.repeat(1, num_images_per_prompt, 1) #각 프롬프트당 생성할이미지수로 idm-vton에서는 1로 고정되어있음(프롬프트하나로 이미지하나생성하니까)
+        #그래서 이 repeat코드는 사실상 의미가 없다고 봐도 무방함.
+        prompt_embeds = prompt_embeds.view(bs_embed * num_images_per_prompt, seq_len, -1)#view 메서드는 텐서를 지정된 크기로 다시 구성하하는거
+
+        #dfg를 수행하기 위해서 unconditional 임베딩에 대해서도 위에서와 똑같이 복제하고 크기 재구성
         if do_classifier_free_guidance:
-            # duplicate unconditional embeddings for each generation per prompt, using mps friendly method
             seq_len = negative_prompt_embeds.shape[1]
 
             if self.text_encoder_2 is not None:
@@ -571,9 +581,12 @@ class StableDiffusionXLInpaintPipeline(
             negative_prompt_embeds = negative_prompt_embeds.repeat(1, num_images_per_prompt, 1)
             negative_prompt_embeds = negative_prompt_embeds.view(batch_size * num_images_per_prompt, seq_len, -1)
 
+        #pooled프롬프트 임베딩도 똑같이 생성할 이미지 개수만큼 복제(여기선 1로고정)
         pooled_prompt_embeds = pooled_prompt_embeds.repeat(1, num_images_per_prompt).view(
             bs_embed * num_images_per_prompt, -1
         )
+
+        #dfg가 true면 negative_pooled_prompt도 생성할 이미지 개수만큼 복제(여기서 1로 고정)
         if do_classifier_free_guidance:
             negative_pooled_prompt_embeds = negative_pooled_prompt_embeds.repeat(1, num_images_per_prompt).view(
                 bs_embed * num_images_per_prompt, -1
@@ -581,35 +594,41 @@ class StableDiffusionXLInpaintPipeline(
 
         if self.text_encoder is not None:
             if isinstance(self, StableDiffusionXLLoraLoaderMixin) and USE_PEFT_BACKEND:
-                # Retrieve the original scale by scaling back the LoRA layers
+                #현재 LoRA 레이어에 적용된 스케일을 제거하거나 원래 값으로 되돌리는 부분
                 unscale_lora_layers(self.text_encoder, lora_scale)
 
         if self.text_encoder_2 is not None:
             if isinstance(self, StableDiffusionXLLoraLoaderMixin) and USE_PEFT_BACKEND:
-                # Retrieve the original scale by scaling back the LoRA layers
+                #현재 LoRA 레이어에 적용된 스케일을 제거하거나 원래 값으로 되돌리는 부분
                 unscale_lora_layers(self.text_encoder_2, lora_scale)
 
         return prompt_embeds, negative_prompt_embeds, pooled_prompt_embeds, negative_pooled_prompt_embeds
 
-    # Copied from diffusers.pipelines.stable_diffusion.pipeline_stable_diffusion.StableDiffusionPipeline.prepare_extra_step_kwargs
+    
     def prepare_extra_step_kwargs(self, generator, eta):
+        #eta는 DDIM에서만 사용됨 - 샘플링 과정에서 노이즈의 양을 제어하는 변수(0에서 1사이값을 가짐)
+
         # prepare extra kwargs for the scheduler step, since not all schedulers have the same signature
         # eta (η) is only used with the DDIMScheduler, it will be ignored for other schedulers.
         # eta corresponds to η in DDIM paper: https://arxiv.org/abs/2010.02502
         # and should be between [0, 1]
 
+        #inspect.signature함수를 이용해서 schduler에 있는 매개변수 모두 가져오고 그중에 eta있는지 확인
         accepts_eta = "eta" in set(inspect.signature(self.scheduler.step).parameters.keys())
         extra_step_kwargs = {}
-        if accepts_eta:
+        if accepts_eta: #schduler가 eta가 존재하는 ddpm모델이면 extra_step_kwargs에 eta저장
             extra_step_kwargs["eta"] = eta
 
-        # check if the scheduler accepts generator
+        #inspect.signature함수를 이용해서 schduler에 있는 매개변수들을 모두 가져오고 그중 generator가져옴
+        #generator는 난수 생성기로, 샘플링 과정에서 재현성(reproducibility)을 위해 사용
         accepts_generator = "generator" in set(inspect.signature(self.scheduler.step).parameters.keys())
-        if accepts_generator:
+        if accepts_generator:#generator지원하면 저장
             extra_step_kwargs["generator"] = generator
+
+        #return값은 step 메서드에서 필요한 매개변수만 포함하고있음
         return extra_step_kwargs
 
-    def check_inputs(
+    def check_inputs( #input이 제대로 들어왔는지 체크하는부분
         self,
         prompt,
         prompt_2,
@@ -696,39 +715,46 @@ class StableDiffusionXLInpaintPipeline(
             if output_type != "pil":
                 raise ValueError(f"The output type should be PIL when inpainting mask crop, but is" f" {output_type}.")
 
-    def prepare_latents(
+    def prepare_latents( #이미지를 잠재공간으로 변환해서 임베딩반환하는 함수 
         self,
-        batch_size,
-        num_channels_latents,
-        height,
+        batch_size, #생성할 이미지의 개수
+        num_channels_latents,#잠재 공간의 채널 수.
+        height,#원본 이미지의 높이와 너비
         width,
-        dtype,
+        dtype,#데이터타입
         device,
-        generator,
-        latents=None,
-        image=None,
-        timestep=None,
-        is_strength_max=True,
-        add_noise=True,
-        return_noise=False,
-        return_image_latents=False,
+        generator,#난수생성기로 노이즈생성할때 필요
+        latents=None,#미리 만들어둔 잠재공간에서의 텐서 
+        image=None,#원본이미지
+        timestep=None,#노이즈 추가할때 필요한 timestep
+        is_strength_max=True,#노이즈 강도설정
+        add_noise=True,#노이즈 추가할지여부
+        return_noise=False,#노이즈 반환할지여부
+        return_image_latents=False,#이미지의 잠재텐서를 반환할지 여부
     ):
+        #vae_scale_factor는 VAE에서 이미지 크기를 줄이는 비율. 이미지 해상도를 줄여 효율성을 높이기 위해 사용
+        #shape = 잠재공간에서의 이미지크기
         shape = (batch_size, num_channels_latents, height // self.vae_scale_factor, width // self.vae_scale_factor)
+
+        #generator와 batchsize크기 비교함, generator는 리스트여야함 아니면 오류발생
         if isinstance(generator, list) and len(generator) != batch_size:
             raise ValueError(
                 f"You have passed a list of generators of length {len(generator)}, but requested an effective batch"
                 f" size of {batch_size}. Make sure the batch size matches the length of the generators."
             )
 
+        #노이즈 강도인 is_strength_max가 없거나 image or timestep이 없으면 오류발생
         if (image is None or timestep is None) and not is_strength_max:
             raise ValueError(
                 "Since strength < 1. initial latents are to be initialised as a combination of Image + Noise."
                 "However, either the image or the noise timestep has not been provided."
             )
-
+        
+        #이미지가 RGBA 즉 채널의 크기가 4인경우 이거 잠재공간의 이미지로 직접사용
         if image.shape[1] == 4:
             image_latents = image.to(device=device, dtype=dtype)
             image_latents = image_latents.repeat(batch_size // image_latents.shape[0], 1, 1, 1)
+        #이미지의 채널크기가 4가 아닌경우 encode__vae_image함수를 사용해서 그 결과를 사용함
         elif return_image_latents or (latents is None and not is_strength_max):
             image = image.to(device=device, dtype=dtype)
             image_latents = self._encode_vae_image(image=image, generator=generator)
@@ -757,29 +783,43 @@ class StableDiffusionXLInpaintPipeline(
 
         return outputs
 
+    #이미지를 잠재공간으로 인코딩하는 함수 
     def _encode_vae_image(self, image: torch.Tensor, generator: torch.Generator):
+        #dtype = input이미지의 데이터타입
         dtype = image.dtype
+        #force_upcast가 true이면 float32로 데이터형을 바꿔줌.
         if self.vae.config.force_upcast:
             image = image.float()
             self.vae.to(dtype=torch.float32)
-
+        #generator가 리스트형태면 
         if isinstance(generator, list):
             image_latents = [
                 retrieve_latents(self.vae.encode(image[i : i + 1]), generator=generator[i])
                 for i in range(image.shape[0])
+                #image.shape[0]만큼 for문 즉 배치사이즈(이미지의 개수)만큼 반복문 돌면서
+                #retriee_latents함수를 이용해서 각 이미지에 대한 latent를 구함.
             ]
+            #torch.cat(..., dim=0)은 첫 번째 차원(배치 차원)으로 연결하여 (batch_size, latent_dim, height, width) 형태의 최종 텐서를 만들어줌.
             image_latents = torch.cat(image_latents, dim=0)
         else:
+            #generator가 리스트가 아닌 한개만있을경우 모든 이미지에 대해서동일한 generator를 적용
             image_latents = retrieve_latents(self.vae.encode(image), generator=generator)
-
+        
         if self.vae.config.force_upcast:
             self.vae.to(dtype)
 
+        #latent공간의 이미지를 원래 이미지의 데이터타입으로 변경
         image_latents = image_latents.to(dtype)
+        #vae에 있는 scaling_factor를 사용해서 잠재공간의 이미지를 스케일링 해줌.
         image_latents = self.vae.config.scaling_factor * image_latents
 
+        #반환값인 image_latents는 (batch_size, latent_dim, height, width)가됨.(스케일링된)
+        #이미지의 기본 차원 -> batch_size, channel, height, width인데
+        #잠재공간으로 변환하면 이미지의 크기는 줄이고 채널수를 늘리게됨
+        #그래서 반환값이  (batch_size, latent_dim, height, width) 이렇게 되는것.
         return image_latents
 
+    #마스킹된 이미지와 마스킹된이미지의 잠재벡터를 반환하는 함수 
     def prepare_mask_latents(
         self, mask, masked_image, batch_size, height, width, dtype, device, generator, do_classifier_free_guidance
     ):
