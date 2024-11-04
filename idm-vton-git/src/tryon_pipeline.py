@@ -547,6 +547,8 @@ class StableDiffusionXLInpaintPipeline(
 
             negative_prompt_embeds = torch.concat(negative_prompt_embeds_list, dim=-1)#마지막차원에 모든레이어의 출력을 추가해줌
 
+            #init용
+
         if self.text_encoder_2 is not None:
             prompt_embeds = prompt_embeds.to(dtype=self.text_encoder_2.dtype, device=device)
         else:
