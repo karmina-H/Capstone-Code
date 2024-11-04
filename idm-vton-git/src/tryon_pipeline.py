@@ -715,7 +715,7 @@ class StableDiffusionXLInpaintPipeline(
             if output_type != "pil":
                 raise ValueError(f"The output type should be PIL when inpainting mask crop, but is" f" {output_type}.")
 
-    def prepare_latents( #이미지를 잠재공간으로 변환해서 임베딩반환하는 함수 
+    def prepare_latents( #이미지를 잠재공간으로 변환하고 노이즈를 더한 임베딩반환하는 함수 
         self,
         batch_size, #생성할 이미지의 개수
         num_channels_latents,#잠재 공간의 채널 수.
@@ -758,21 +758,24 @@ class StableDiffusionXLInpaintPipeline(
         elif return_image_latents or (latents is None and not is_strength_max):
             image = image.to(device=device, dtype=dtype)
             image_latents = self._encode_vae_image(image=image, generator=generator)
+            #배치사이즈만큼 이미지복사 -> 여기서 1이니까 복제안하는거랑 똑같음.
             image_latents = image_latents.repeat(batch_size // image_latents.shape[0], 1, 1, 1)
 
+        #latents가 정의되지 않았을때
         if latents is None and add_noise:
+            #shape에 맞는 무작위의 노이즈 텐서를생성함.
             noise = randn_tensor(shape, generator=generator, device=device, dtype=dtype)
-            # if strength is 1. then initialise the latents to noise, else initial to image + noise
+            # is_strength_max가 True면 맨처음의 임베딩 벡터를 완전한 노이즈에서 시작하고 그렇지 않으면 이미지+노이즈로 시작함.
             latents = noise if is_strength_max else self.scheduler.add_noise(image_latents, noise, timestep)
             # if pure noise then scale the initial latents by the  Scheduler's init sigma
             latents = latents * self.scheduler.init_noise_sigma if is_strength_max else latents
-        elif add_noise:
+        elif add_noise:#latents가 정의되었을때 스케줄러를 이용해서 초기노이즈를 더해줌.
             noise = latents.to(device)
             latents = noise * self.scheduler.init_noise_sigma
         else:
             noise = randn_tensor(shape, generator=generator, device=device, dtype=dtype)
             latents = image_latents.to(device)
-
+        #매개변수 조건에 맞게ouput조절
         outputs = (latents,)
 
         if return_noise:
