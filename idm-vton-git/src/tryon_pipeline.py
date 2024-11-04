@@ -823,15 +823,15 @@ class StableDiffusionXLInpaintPipeline(
     def prepare_mask_latents(
         self, mask, masked_image, batch_size, height, width, dtype, device, generator, do_classifier_free_guidance
     ):
-        # resize the mask to latents shape as we concatenate the mask to the latents
-        # we do that before converting to dtype to avoid breaking in case we're using cpu_offload
-        # and half precision
-        mask = torch.nn.functional.interpolate(
+        #mask는 사용하기 위해서 masked_image를 전처리한거고 masked_image는 원본 masking이미지로 여기서 masked_image의
+        #잠재벡터를 구하기 위해서 필요함 -> 마스킹된 이미지의 잠재벡터 구하는 이유는 원본이미지의 잠재벡터와 결합하기 위해서임.
+        mask = torch.nn.functional.interpolate(#mask이미지의 크기를 변환하고 데이터타입변환(잠재벡터와 결합하기위해서)
             mask, size=(height // self.vae_scale_factor, width // self.vae_scale_factor)
         )
         mask = mask.to(device=device, dtype=dtype)
 
-        # duplicate mask and masked_image_latents for each generation per prompt, using mps friendly method
+        #프롬프트마다 다른 이미지를 생성하기위해서mask이미지를 복제하는데 여기서는 이미지1개만 생성하니까
+        # mask.shape[0]이게 1임 그래서 복제가 안됨
         if mask.shape[0] < batch_size:
             if not batch_size % mask.shape[0] == 0:
                 raise ValueError(
@@ -841,7 +841,10 @@ class StableDiffusionXLInpaintPipeline(
                 )
             mask = mask.repeat(batch_size // mask.shape[0], 1, 1, 1)
 
+        #dfg면 negative_prompt까지쓰니까 mask크기를 두배로 늘리고 아니면 그냥 mask사용
         mask = torch.cat([mask] * 2) if do_classifier_free_guidance else mask
+
+        #masked_image또한 위에서 mask에 대해서 실행한 것과 동일한 과정을 거쳐서 실행하는부분
         if masked_image is not None and masked_image.shape[1] == 4:
             masked_image_latents = masked_image
         else:
@@ -870,6 +873,7 @@ class StableDiffusionXLInpaintPipeline(
             # aligning device to prevent device errors when concating it with the latent model input
             masked_image_latents = masked_image_latents.to(device=device, dtype=dtype)
 
+            #cgf와 이미지배치사이즈를 고려한 mask, masked_image_latents를 반환
         return mask, masked_image_latents
 
     # Copied from diffusers.pipelines.stable_diffusion_xl.pipeline_stable_diffusion_xl_img2img.StableDiffusionXLImg2ImgPipeline.get_timesteps
