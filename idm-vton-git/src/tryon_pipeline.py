@@ -356,7 +356,7 @@ class StableDiffusionXLInpaintPipeline(
         # UNet의 encoder_hid_proj가 ImageProjection인지 확인하여 output_hidden_state를 결정
         output_hidden_state = not isinstance(self.unet.encoder_hid_proj, ImageProjection)
         # print(output_hidden_state)
-        #인코더함수이용해서 인코딩된 이미지와, 0으로 채워진 같은크기 텐서를 image_embeds와 negative_image_embeds로 받음
+        #인코더함수이용해서 인코딩된 이미지와, 0으로 채워진 같은크기 텐서를 image_embeds와 negative_image_embeds로 받음(negative embeds는 값이 다 0으로 채워져있음)
         image_embeds, negative_image_embeds = self.encode_image(
             ip_adapter_image, device, 1, output_hidden_state
         )
@@ -365,7 +365,7 @@ class StableDiffusionXLInpaintPipeline(
         # single_negative_image_embeds = torch.stack([single_negative_image_embeds] * num_images_per_prompt, dim=0)
         # print(single_image_embeds.shape)
 
-        #조건이 있는 이미지와 조건이 없는 이미지(원본사용해서 인코딩한 텐서와 0으로 채워진텐서를 모두 고려서 더 좋은 품질을 만들기 위해서 두개 concat해줌)
+        #Classifier-Free Diffusion Guidance을 위해서 unconditional embed와 conditional embed를 concat해서 image_embed를 반환
         if self.do_classifier_free_guidance:
             image_embeds = torch.cat([negative_image_embeds, image_embeds])
             image_embeds = image_embeds.to(device)
@@ -375,89 +375,55 @@ class StableDiffusionXLInpaintPipeline(
 
 
     # Copied from diffusers.pipelines.stable_diffusion_xl.pipeline_stable_diffusion_xl.StableDiffusionXLPipeline.encode_prompt
-    def encode_prompt(
+    def encode_prompt( #프롬프트를 인코딩해서 hiddenstate로 변화하는 함수
         self,
-        prompt: str,
-        prompt_2: Optional[str] = None,
-        device: Optional[torch.device] = None,
-        num_images_per_prompt: int = 1,
-        do_classifier_free_guidance: bool = True,
-        negative_prompt: Optional[str] = None,
-        negative_prompt_2: Optional[str] = None,
-        prompt_embeds: Optional[torch.FloatTensor] = None,
-        negative_prompt_embeds: Optional[torch.FloatTensor] = None,
+        prompt: str, #인코딩할 프롬프트
+        prompt_2: Optional[str] = None, #tokenizer_2와 text_encoder_2에 전달될 프롬프트입니다. 정의되지 않은 경우, prompt가 두 텍스트 인코더 모두에 사용됩니다.
+        device: Optional[torch.device] = None, 
+        num_images_per_prompt: int = 1, #각 프롬프트당 생성할 이미지 수.
+        do_classifier_free_guidance: bool = True,#Classifier Free Guidance를 사용할지 여부.
+        negative_prompt: Optional[str] = None, #이미지 생성의 지침으로 사용하지 않을 프롬프트입니다. 정의되지 않은 경우, negative_prompt_embeds를 대신 전달해야 합니다. Guidance를 사용하지 않을 때 (guidance_scale이 1 미만일 때) 무시됩니다.
+        negative_prompt_2: Optional[str] = None,#tokenizer_2와 text_encoder_2에 전달될, 이미지 생성을 지시하지 않을 프롬프트입니다. 정의되지 않은 경우, negative_prompt가 두 텍스트 인코더 모두에 사용됩니다.
+        prompt_embeds: Optional[torch.FloatTensor] = None,#미리 생성된 텍스트 임베딩으로, 프롬프트 가중치 조정 등의 작업에 쉽게 사용할 수 있습니다. 제공되지 않은 경우 prompt 인수로부터 텍스트 임베딩이 생성됩니다
+        negative_prompt_embeds: Optional[torch.FloatTensor] = None,#제공되지 않은 경우 negative_prompt 인수로부터 네거티브 프롬프트 임베딩이 생성됩니다.
         pooled_prompt_embeds: Optional[torch.FloatTensor] = None,
-        negative_pooled_prompt_embeds: Optional[torch.FloatTensor] = None,
-        lora_scale: Optional[float] = None,
-        clip_skip: Optional[int] = None,
+        #그냥 텍스트임베딩은 각 단어에 대한 개별적인 임베딩을 제공해서 세부적인 의미를 파악하고 pooled는 maxpooling이나 avgpooling을 적용해서 문장의 전체적인 의미를 파악함.
+        negative_pooled_prompt_embeds: Optional[torch.FloatTensor] = None,#nagtive_prompt의 pooled_embeds
+        lora_scale: Optional[float] = None,#텍스트 인코더의 모든 LoRA 레이어에 적용할 LoRA 스케일 값입니다. LoRA 레이어가 로드된 경우에만 적용됩니다.
+        clip_skip: Optional[int] = None,#프롬프트 임베딩을 계산할 때 CLIP에서 건너뛸 레이어 수입니다. 값이 1인 경우, 최종 레이어 직전의 출력을 사용하여 프롬프트 임베딩을 계산합니다.
     ):
-        r"""
-        Encodes the prompt into text encoder hidden states.
+        
+        #Encodes the prompt into text encoder hidden states.
 
-        Args:
-            prompt (`str` or `List[str]`, *optional*):
-                prompt to be encoded
-            prompt_2 (`str` or `List[str]`, *optional*):
-                The prompt or prompts to be sent to the `tokenizer_2` and `text_encoder_2`. If not defined, `prompt` is
-                used in both text-encoders
-            device: (`torch.device`):
-                torch device
-            num_images_per_prompt (`int`):
-                number of images that should be generated per prompt
-            do_classifier_free_guidance (`bool`):
-                whether to use classifier free guidance or not
-            negative_prompt (`str` or `List[str]`, *optional*):
-                The prompt or prompts not to guide the image generation. If not defined, one has to pass
-                `negative_prompt_embeds` instead. Ignored when not using guidance (i.e., ignored if `guidance_scale` is
-                less than `1`).
-            negative_prompt_2 (`str` or `List[str]`, *optional*):
-                The prompt or prompts not to guide the image generation to be sent to `tokenizer_2` and
-                `text_encoder_2`. If not defined, `negative_prompt` is used in both text-encoders
-            prompt_embeds (`torch.FloatTensor`, *optional*):
-                Pre-generated text embeddings. Can be used to easily tweak text inputs, *e.g.* prompt weighting. If not
-                provided, text embeddings will be generated from `prompt` input argument.
-            negative_prompt_embeds (`torch.FloatTensor`, *optional*):
-                Pre-generated negative text embeddings. Can be used to easily tweak text inputs, *e.g.* prompt
-                weighting. If not provided, negative_prompt_embeds will be generated from `negative_prompt` input
-                argument.
-            pooled_prompt_embeds (`torch.FloatTensor`, *optional*):
-                Pre-generated pooled text embeddings. Can be used to easily tweak text inputs, *e.g.* prompt weighting.
-                If not provided, pooled text embeddings will be generated from `prompt` input argument.
-            negative_pooled_prompt_embeds (`torch.FloatTensor`, *optional*):
-                Pre-generated negative pooled text embeddings. Can be used to easily tweak text inputs, *e.g.* prompt
-                weighting. If not provided, pooled negative_prompt_embeds will be generated from `negative_prompt`
-                input argument.
-            lora_scale (`float`, *optional*):
-                A lora scale that will be applied to all LoRA layers of the text encoder if LoRA layers are loaded.
-            clip_skip (`int`, *optional*):
-                Number of layers to be skipped from CLIP while computing the prompt embeddings. A value of 1 means that
-                the output of the pre-final layer will be used for computing the prompt embeddings.
-        """
+
         device = device or self._execution_device
 
-        # set lora scale so that monkey patched LoRA
-        # function of text encoder can correctly access it
+        #lora_scale을 따로 지정하면 그걸로 set해줌
+        #Lora_scale이란 추가된 Lora파라미터들이 기존 모델의 가중치에 적용될때 사용하는 가중치 값으로 새로학습된 파라미터들을 기존의 모델에 얼마나 반영할 것인가를 조절함
+        #lora_scale은 LoRA를 통해 추가된 학습 파라미터의 강도를 조절하여, 모델이 특정 조건이나 텍스트 프롬프트에 대해 얼마나 민감하게 반응할지 결정
+        #여기서는 프롬프트가 이미지생성에 얼마만큼 크게 영향을 미칠지 그 강도를 조정하는 용도
         if lora_scale is not None and isinstance(self, StableDiffusionXLLoraLoaderMixin):
             self._lora_scale = lora_scale
 
-            # dynamically adjust the LoRA scale
+            #동적으로 lora_scale을 조정하는 부분
             if self.text_encoder is not None:
                 if not USE_PEFT_BACKEND:
                     adjust_lora_scale_text_encoder(self.text_encoder, lora_scale)
                 else:
                     scale_lora_layers(self.text_encoder, lora_scale)
-
+            #텍스트인코더2가 존재할경우 똑같이 lora_scale조정
             if self.text_encoder_2 is not None:
                 if not USE_PEFT_BACKEND:
                     adjust_lora_scale_text_encoder(self.text_encoder_2, lora_scale)
                 else:
                     scale_lora_layers(self.text_encoder_2, lora_scale)
 
+        #prompt가 문자열일경우 리스트로변환함.
         prompt = [prompt] if isinstance(prompt, str) else prompt
 
         if prompt is not None:
             batch_size = len(prompt)
-        else:
+        else: #프롬프트가 없으면 프롬프트 embeds들어오니까 크기 이거로 설정
             batch_size = prompt_embeds.shape[0]
 
         # Define tokenizers and text encoders
@@ -466,6 +432,7 @@ class StableDiffusionXLInpaintPipeline(
             [self.text_encoder, self.text_encoder_2] if self.text_encoder is not None else [self.text_encoder_2]
         )
 
+        #미리 생성된 prompt임베딩이 없을때 프롬프트를 임베딩으로 변환하는 과정.
         if prompt_embeds is None:
             prompt_2 = prompt_2 or prompt
             prompt_2 = [prompt_2] if isinstance(prompt_2, str) else prompt_2
@@ -502,7 +469,8 @@ class StableDiffusionXLInpaintPipeline(
                 # We are only ALWAYS interested in the pooled output of the final text encoder
                 pooled_prompt_embeds = prompt_embeds[0]
                 if clip_skip is None:
-                    prompt_embeds = prompt_embeds.hidden_states[-2]
+                    prompt_embeds = prompt_embeds.hidden_states[-2] #일반적으로 신경망의 마지막층은 분류나 회귀같은 결과에 특화되어있어서 일반적인 특성보다는 어떤 목표를 위한 특성정보를 포함하기떄문에
+                    #뒤에서 두번째 레이어를 사용함
                 else:
                     # "2" because SDXL always indexes from the penultimate layer.
                     prompt_embeds = prompt_embeds.hidden_states[-(clip_skip + 2)]
@@ -511,42 +479,54 @@ class StableDiffusionXLInpaintPipeline(
 
             prompt_embeds = torch.concat(prompt_embeds_list, dim=-1)
 
-        # get unconditional embeddings for classifier free guidance
+        # classifier free guidance을 위해서 unconditional embeddings 생성
+
+        #negative prompt혹은 force_zeros_for_empty_prompt가 있으면 zero_out_negative_prompt = True
         zero_out_negative_prompt = negative_prompt is None and self.config.force_zeros_for_empty_prompt
+
+        #cfg가 true이고 negative_prompt_embed가 없고 negative_prompt가 있으면 prompt이용해서 embed생성(모두0으로된 텐서생성)
         if do_classifier_free_guidance and negative_prompt_embeds is None and zero_out_negative_prompt:
             negative_prompt_embeds = torch.zeros_like(prompt_embeds)
             negative_pooled_prompt_embeds = torch.zeros_like(pooled_prompt_embeds)
+            #zero_out_negative_prompt이게 없으면 빈 문자열로 negative_prompt생성
         elif do_classifier_free_guidance and negative_prompt_embeds is None:
             negative_prompt = negative_prompt or ""
             negative_prompt_2 = negative_prompt_2 or negative_prompt
 
-            # normalize str to list
+            # negative_prompt와 negative_prompt_2가 문자열이면 batch_size크기만큼 리스트형태로 복제
             negative_prompt = batch_size * [negative_prompt] if isinstance(negative_prompt, str) else negative_prompt
             negative_prompt_2 = (
                 batch_size * [negative_prompt_2] if isinstance(negative_prompt_2, str) else negative_prompt_2
             )
 
+
             uncond_tokens: List[str]
+            # # prompt가 None이 아니고, negative_prompt의 타입이 prompt와 다르면 오류를 발생
             if prompt is not None and type(prompt) is not type(negative_prompt):
                 raise TypeError(
                     f"`negative_prompt` should be the same type to `prompt`, but got {type(negative_prompt)} !="
                     f" {type(prompt)}."
                 )
+                # # negative_prompt의 길이가 batch_size와 맞지 않으면 오류를 발생
             elif batch_size != len(negative_prompt):
                 raise ValueError(
                     f"`negative_prompt`: {negative_prompt} has batch size {len(negative_prompt)}, but `prompt`:"
                     f" {prompt} has batch size {batch_size}. Please make sure that passed `negative_prompt` matches"
                     " the batch size of `prompt`."
                 )
+                #cfg를 위한 unconditonal_tokens생성
             else:
                 uncond_tokens = [negative_prompt, negative_prompt_2]
 
+            #unconditional_embeds를 위한 리스트생성
             negative_prompt_embeds_list = []
+
             for negative_prompt, tokenizer, text_encoder in zip(uncond_tokens, tokenizers, text_encoders):
                 if isinstance(self, TextualInversionLoaderMixin):
                     negative_prompt = self.maybe_convert_prompt(negative_prompt, tokenizer)
 
                 max_length = prompt_embeds.shape[1]
+                #프롬프트를 토큰화
                 uncond_input = tokenizer(
                     negative_prompt,
                     padding="max_length",
@@ -554,18 +534,18 @@ class StableDiffusionXLInpaintPipeline(
                     truncation=True,
                     return_tensors="pt",
                 )
-
+                #토큰된거를 임베딩화
                 negative_prompt_embeds = text_encoder(
                     uncond_input.input_ids.to(device),
-                    output_hidden_states=True,
+                    output_hidden_states=True, #모들 레이어에서의 hidden state를 반환함
                 )
                 # We are only ALWAYS interested in the pooled output of the final text encoder
-                negative_pooled_prompt_embeds = negative_prompt_embeds[0]
-                negative_prompt_embeds = negative_prompt_embeds.hidden_states[-2]
+                negative_pooled_prompt_embeds = negative_prompt_embeds[0] #인코더의 첫번째 출력레이어를 pooled로 사용(전체적인 의미파악에 유용함)
+                negative_prompt_embeds = negative_prompt_embeds.hidden_states[-2]#인코더의 마지막에서 두번째레이어를 일반임베딩으로 사용(세부적인 의미파악에 유용)
 
-                negative_prompt_embeds_list.append(negative_prompt_embeds)
+                negative_prompt_embeds_list.append(negative_prompt_embeds)#임베딩의 모든 레이어출력이 리스트로 저장됨.
 
-            negative_prompt_embeds = torch.concat(negative_prompt_embeds_list, dim=-1)
+            negative_prompt_embeds = torch.concat(negative_prompt_embeds_list, dim=-1)#마지막차원에 모든레이어의 출력을 추가해줌
 
         if self.text_encoder_2 is not None:
             prompt_embeds = prompt_embeds.to(dtype=self.text_encoder_2.dtype, device=device)
