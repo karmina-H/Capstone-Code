@@ -826,7 +826,7 @@ class StableDiffusionXLInpaintPipeline(
     def prepare_mask_latents(
         self, mask, masked_image, batch_size, height, width, dtype, device, generator, do_classifier_free_guidance
     ):
-        #mask는 사용하기 위해서 masked_image를 전처리한거고 masked_image는 원본 masking이미지로 여기서 masked_image의
+        #masked_image는 masking이미지로 여기서 masked_image의
         #잠재벡터를 구하기 위해서 필요함 -> 마스킹된 이미지의 잠재벡터 구하는 이유는 원본이미지의 잠재벡터와 결합하기 위해서임.
         mask = torch.nn.functional.interpolate(#mask이미지의 크기를 변환하고 데이터타입변환(잠재벡터와 결합하기위해서)
             mask, size=(height // self.vae_scale_factor, width // self.vae_scale_factor)
@@ -853,7 +853,7 @@ class StableDiffusionXLInpaintPipeline(
         else:
             masked_image_latents = None
 
-        if masked_image is not None:
+        if masked_image is not None: #masked_image가 존재하나 latent에 없을때
             if masked_image_latents is None:
                 masked_image = masked_image.to(device=device, dtype=dtype)
                 masked_image_latents = self._encode_vae_image(masked_image, generator=generator)
@@ -1066,10 +1066,13 @@ class StableDiffusionXLInpaintPipeline(
             self.vae.set_attn_processor(FusedAttnProcessor2_0())
 
     # Copied from diffusers.pipelines.latent_consistency_models.pipeline_latent_consistency_text2img.LatentConsistencyModelPipeline.get_guidance_scale_embedding
+
     # 임베딩 벡터를 생성하기 위한 함수. Guidance를 생성하기 위해 사용된다.
     # w가 입력 텐서로 사용 / embedding_dim, dtype은 생성되는 임베딩 벡터에 대한 설명이다.
     # 결과는 이를 통해서 생성된 임베딩 벡터. 여기에는 timesteps가 같이 포함되어 반환된다.
-    def get_guidance_scale_embedding(self, w, embedding_dim=512, dtype=torch.float32):
+    #특정 특성을 강화하거나 감쇠할 수 있도록, w 값에 따라 조정된 포지셔널 임베딩을 생성하는 역할
+    #sin과 cos을 사용한 임베딩 생성 방식은 Transformer와 같은 모델에서 사용하는 방식과 유사하여, 시간이나 단계에 따른 정보를 모델이 효과적으로 학습할 수 있게 돕습니다.
+    def get_guidance_scale_embedding(self, w, embedding_dim=512, dtype=torch.float32): #일단보류
         """
         See https://github.com/google-research/vdm/blob/dc27b98a554f65cdc654b800da5aa1846545d41b/model_vdm.py#L298
 
@@ -1084,9 +1087,11 @@ class StableDiffusionXLInpaintPipeline(
         Returns:
             `torch.FloatTensor`: Embedding vectors with shape `(len(timesteps), embedding_dim)`
         """
-        assert len(w.shape) == 1
+        assert len(w.shape) == 1#w는 1차원 텐서여야함,  이 함수가 w의 각 값에 대해 임베딩을 생성하는 방식이기 때문에, 배치 형태의 1차원 입력을 기대
+        #w를 1000배로 확장하는 단계입니다. 이 확장은 입력 값의 범위를 조절해 임베딩 벡터의 분포를 넓히는 역할을 합니다. 이를 통해 임베딩 벡터가 더 다양한 특성을 표현할 수 있도록 도움
         w = w * 1000.0
 
+        #embedding_dim의 절반(half_dim)을 계산합니다. 이 절반값을 사용하는 이유는 이후 sin과 cos 함수를 적용할 때, 각 함수를 절반씩 사용하여 임베딩 차원을 채우기 위함
         half_dim = embedding_dim // 2
         emb = torch.log(torch.tensor(10000.0)) / (half_dim - 1)
         emb = torch.exp(torch.arange(half_dim, dtype=dtype) * -emb)
@@ -1139,225 +1144,57 @@ class StableDiffusionXLInpaintPipeline(
     @torch.no_grad()
     @replace_example_docstring(EXAMPLE_DOC_STRING)
     def __call__(
+        #이 모델 텍스트인코더 두개를 사용중인데 
+        #prompt만 매개변수로 주면 이 프롬프트하나가 텍스트인코더 두개에 들어감.
         self,
-        prompt: Union[str, List[str]] = None,
-        prompt_2: Optional[Union[str, List[str]]] = None,
-        image: PipelineImageInput = None,
-        mask_image: PipelineImageInput = None,
-        masked_image_latents: torch.FloatTensor = None,
-        height: Optional[int] = None,
-        width: Optional[int] = None,
-        padding_mask_crop: Optional[int] = None,
-        strength: float = 0.9999,
-        num_inference_steps: int = 50,
-        timesteps: List[int] = None,
-        denoising_start: Optional[float] = None,
-        denoising_end: Optional[float] = None,
-        guidance_scale: float = 7.5,
-        negative_prompt: Optional[Union[str, List[str]]] = None,
-        negative_prompt_2: Optional[Union[str, List[str]]] = None,
-        num_images_per_prompt: Optional[int] = 1,
-        eta: float = 0.0,
-        generator: Optional[Union[torch.Generator, List[torch.Generator]]] = None,
-        latents: Optional[torch.FloatTensor] = None,
-        prompt_embeds: Optional[torch.FloatTensor] = None,
+        prompt: Union[str, List[str]] = None, #이거 정의되있지 않은경우 prompt_embeds를 직접 넣어주어야함.
+        prompt_2: Optional[Union[str, List[str]]] = None, #text_encoder_2에 전달될 프롬프트
+        image: PipelineImageInput = None, #이미지 인페인팅(inpainting)**을 위한 이미지 = 원본이미지
+        mask_image: PipelineImageInput = None, #마스크된이미지(마스크된 부분은 흰색으로 마스크해야됨)
+        masked_image_latents: torch.FloatTensor = None,#마스크된 이미지의 latent구할껀데 그거 저장할 변수
+        height: Optional[int] = None,#생성할 이미지의 높이로 기본적으로 1024로 설정함 근데 512이하로 설정하면 성능이 저하됨
+        width: Optional[int] = None,# 높이와 마찬가지로 보통 1024 픽셀로 설정
+        padding_mask_crop: Optional[int] = None,#마스크 영역이 작고, 배경이 포함된 큰 이미지를 사용할 때 유용(우리는 이거 안쓸거 같음)
+        strength: float = 0.9999,#diffusion모델의 노이즈 강도
+        num_inference_steps: int = 50,#denoising단계수로 기본값은 50, 이게 클수록 품질이 좋아지지만 시간이 더 많이걸림
+        timesteps: List[int] = None,# 커스텀 디노이징 타임스텝으로 num_inference_steps에 따라 타입스텝이 설정되지만 사용자가 이거로 직접 정의가능
+        denoising_start: Optional[float] = None,#전체 디노이징 프로세스 중 얼마나 많은 부분을 생략할지 설정하는 값. 이미지가 부분적으로 디노이지된 상태로 간주될때 사용됨(Mixture of Denoisers설정에서 유용하게ㅐ 쓰인다고함)
+        denoising_end: Optional[float] = None,#denoising을 미리 종료하여 최종 결과물이 약간의 노이즈를 남겨 후속 파이프라인이 이를 제거할 수 있도록 하는 설정
+        guidance_scale: float = 7.5,#가이던스 스케일 값으로 값이 클수록 텍스트 프롬프트에 더 강하게 반응함.
+        negative_prompt: Optional[Union[str, List[str]]] = None,#생성할 반대의 프롬프트
+        negative_prompt_2: Optional[Union[str, List[str]]] = None,#두번째 인코더에 들어갈 생성할 반대의 프롬프트
+        num_images_per_prompt: Optional[int] = 1,#프롬프트당 이미지수로 프롬프트한개에 이미지 한개생성하니까 1로고정
+        eta: float = 0.0,#DDIM스케줄러에서 사용할 파라미터, 노이즈조절에 사용됨.
+        generator: Optional[Union[torch.Generator, List[torch.Generator]]] = None,#SAMPLING할때 쓸 난수생성기라고함
+        latents: Optional[torch.FloatTensor] = None,#이미지 생성 과정에서 사용할 미리 생성된 노이즈 텐서로 이게 초기 노이즈상태임 이게 안주어지면 GENERATOR를 이용해서 랜덤한 노이즈텐서를 생성함.
+        prompt_embeds: Optional[torch.FloatTensor] = None,#각 기본 텐서들에대한 임베딩버전들.
         negative_prompt_embeds: Optional[torch.FloatTensor] = None,
         pooled_prompt_embeds: Optional[torch.FloatTensor] = None,
         negative_pooled_prompt_embeds: Optional[torch.FloatTensor] = None,
-        ip_adapter_image: Optional[PipelineImageInput] = None,
-        output_type: Optional[str] = "pil",
-        cloth =None,
-        pose_img = None,
-        text_embeds_cloth=None,
+        ip_adapter_image: Optional[PipelineImageInput] = None,#입력 이미지의 스타일이나 색감을 생성 이미지에 반영할 때 사용됨
+        output_type: Optional[str] = "pil",#생성된 이미지의 출력 형식으로, PIL.Image.Image 또는 np.array 중에서 선택(기본값은 pil)
+        cloth =None, #입힐 옷 사진
+        pose_img = None,#사람이미지에 대한 pose이미지
+        text_embeds_cloth=None,#옷에대한 설명 프롬프트(임베딩버전)
         return_dict: bool = True,
-        cross_attention_kwargs: Optional[Dict[str, Any]] = None,
+        cross_attention_kwargs: Optional[Dict[str, Any]] = None,#AttentionProcessor에 전달할 추가 인수
         guidance_rescale: float = 0.0,
-        original_size: Tuple[int, int] = None,
-        crops_coords_top_left: Tuple[int, int] = (0, 0),
-        target_size: Tuple[int, int] = None,
-        negative_original_size: Optional[Tuple[int, int]] = None,
+        original_size: Tuple[int, int] = None,#이미지의 원본크기(기본값은 1024*1024)
+        crops_coords_top_left: Tuple[int, int] = (0, 0),#이미지의 왼쪽 상단을 크롭위치의 처음으로 설정
+        target_size: Tuple[int, int] = None,#생성할 이미지의 최종크기로 기본값 = 1024*1024
+        negative_original_size: Optional[Tuple[int, int]] = None,#
         negative_crops_coords_top_left: Tuple[int, int] = (0, 0),
         negative_target_size: Optional[Tuple[int, int]] = None,
-        aesthetic_score: float = 6.0,
+        aesthetic_score: float = 6.0,#미학점수? 제공하는건데 이거 일단 분석보류함
         negative_aesthetic_score: float = 2.5,
-        clip_skip: Optional[int] = None,
+        clip_skip: Optional[int] = None,#CLIP에서 프롬프트 임베딩을 계산할 때 스킵할 레이어 수
         pooled_prompt_embeds_c=None,
-        callback_on_step_end: Optional[Callable[[int, int, Dict], None]] = None,
-        callback_on_step_end_tensor_inputs: List[str] = ["latents"],
+        callback_on_step_end: Optional[Callable[[int, int, Dict], None]] = None,#각 디노이징 단계가 끝날 때 호출되는 함수입니다. 각 단계에서 특정 작업을 수행할 수 있습니다.
+        callback_on_step_end_tensor_inputs: List[str] = ["latents"],#callback_on_step_end 함수에 전달할 텐서 입력 목록
         **kwargs,
     ):
-        r"""
-        Function invoked when calling the pipeline for generation.
 
-        Args:
-            prompt (`str` or `List[str]`, *optional*):
-                The prompt or prompts to guide the image generation. If not defined, one has to pass `prompt_embeds`.
-                instead.
-            prompt_2 (`str` or `List[str]`, *optional*):
-                The prompt or prompts to be sent to the `tokenizer_2` and `text_encoder_2`. If not defined, `prompt` is
-                used in both text-encoders
-            image (`PIL.Image.Image`):
-                `Image`, or tensor representing an image batch which will be inpainted, *i.e.* parts of the image will
-                be masked out with `mask_image` and repainted according to `prompt`.
-            mask_image (`PIL.Image.Image`):
-                `Image`, or tensor representing an image batch, to mask `image`. White pixels in the mask will be
-                repainted, while black pixels will be preserved. If `mask_image` is a PIL image, it will be converted
-                to a single channel (luminance) before use. If it's a tensor, it should contain one color channel (L)
-                instead of 3, so the expected shape would be `(B, H, W, 1)`.
-            height (`int`, *optional*, defaults to self.unet.config.sample_size * self.vae_scale_factor):
-                The height in pixels of the generated image. This is set to 1024 by default for the best results.
-                Anything below 512 pixels won't work well for
-                [stabilityai/stable-diffusion-xl-base-1.0](https://huggingface.co/stabilityai/stable-diffusion-xl-base-1.0)
-                and checkpoints that are not specifically fine-tuned on low resolutions.
-            width (`int`, *optional*, defaults to self.unet.config.sample_size * self.vae_scale_factor):
-                The width in pixels of the generated image. This is set to 1024 by default for the best results.
-                Anything below 512 pixels won't work well for
-                [stabilityai/stable-diffusion-xl-base-1.0](https://huggingface.co/stabilityai/stable-diffusion-xl-base-1.0)
-                and checkpoints that are not specifically fine-tuned on low resolutions.
-            padding_mask_crop (`int`, *optional*, defaults to `None`):
-                The size of margin in the crop to be applied to the image and masking. If `None`, no crop is applied to image and mask_image. If
-                `padding_mask_crop` is not `None`, it will first find a rectangular region with the same aspect ration of the image and
-                contains all masked area, and then expand that area based on `padding_mask_crop`. The image and mask_image will then be cropped based on
-                the expanded area before resizing to the original image size for inpainting. This is useful when the masked area is small while the image is large
-                and contain information inreleant for inpainging, such as background.
-            strength (`float`, *optional*, defaults to 0.9999):
-                Conceptually, indicates how much to transform the masked portion of the reference `image`. Must be
-                between 0 and 1. `image` will be used as a starting point, adding more noise to it the larger the
-                `strength`. The number of denoising steps depends on the amount of noise initially added. When
-                `strength` is 1, added noise will be maximum and the denoising process will run for the full number of
-                iterations specified in `num_inference_steps`. A value of 1, therefore, essentially ignores the masked
-                portion of the reference `image`. Note that in the case of `denoising_start` being declared as an
-                integer, the value of `strength` will be ignored.
-            num_inference_steps (`int`, *optional*, defaults to 50):
-                The number of denoising steps. More denoising steps usually lead to a higher quality image at the
-                expense of slower inference.
-            timesteps (`List[int]`, *optional*):
-                Custom timesteps to use for the denoising process with schedulers which support a `timesteps` argument
-                in their `set_timesteps` method. If not defined, the default behavior when `num_inference_steps` is
-                passed will be used. Must be in descending order.
-            denoising_start (`float`, *optional*):
-                When specified, indicates the fraction (between 0.0 and 1.0) of the total denoising process to be
-                bypassed before it is initiated. Consequently, the initial part of the denoising process is skipped and
-                it is assumed that the passed `image` is a partly denoised image. Note that when this is specified,
-                strength will be ignored. The `denoising_start` parameter is particularly beneficial when this pipeline
-                is integrated into a "Mixture of Denoisers" multi-pipeline setup, as detailed in [**Refining the Image
-                Output**](https://huggingface.co/docs/diffusers/api/pipelines/stable_diffusion/stable_diffusion_xl#refining-the-image-output).
-            denoising_end (`float`, *optional*):
-                When specified, determines the fraction (between 0.0 and 1.0) of the total denoising process to be
-                completed before it is intentionally prematurely terminated. As a result, the returned sample will
-                still retain a substantial amount of noise (ca. final 20% of timesteps still needed) and should be
-                denoised by a successor pipeline that has `denoising_start` set to 0.8 so that it only denoises the
-                final 20% of the scheduler. The denoising_end parameter should ideally be utilized when this pipeline
-                forms a part of a "Mixture of Denoisers" multi-pipeline setup, as elaborated in [**Refining the Image
-                Output**](https://huggingface.co/docs/diffusers/api/pipelines/stable_diffusion/stable_diffusion_xl#refining-the-image-output).
-            guidance_scale (`float`, *optional*, defaults to 7.5):
-                Guidance scale as defined in [Classifier-Free Diffusion Guidance](https://arxiv.org/abs/2207.12598).
-                `guidance_scale` is defined as `w` of equation 2. of [Imagen
-                Paper](https://arxiv.org/pdf/2205.11487.pdf). Guidance scale is enabled by setting `guidance_scale >
-                1`. Higher guidance scale encourages to generate images that are closely linked to the text `prompt`,
-                usually at the expense of lower image quality.
-            negative_prompt (`str` or `List[str]`, *optional*):
-                The prompt or prompts not to guide the image generation. If not defined, one has to pass
-                `negative_prompt_embeds` instead. Ignored when not using guidance (i.e., ignored if `guidance_scale` is
-                less than `1`).
-            negative_prompt_2 (`str` or `List[str]`, *optional*):
-                The prompt or prompts not to guide the image generation to be sent to `tokenizer_2` and
-                `text_encoder_2`. If not defined, `negative_prompt` is used in both text-encoders
-            prompt_embeds (`torch.FloatTensor`, *optional*):
-                Pre-generated text embeddings. Can be used to easily tweak text inputs, *e.g.* prompt weighting. If not
-                provided, text embeddings will be generated from `prompt` input argument.
-            negative_prompt_embeds (`torch.FloatTensor`, *optional*):
-                Pre-generated negative text embeddings. Can be used to easily tweak text inputs, *e.g.* prompt
-                weighting. If not provided, negative_prompt_embeds will be generated from `negative_prompt` input
-                argument.
-            pooled_prompt_embeds (`torch.FloatTensor`, *optional*):
-                Pre-generated pooled text embeddings. Can be used to easily tweak text inputs, *e.g.* prompt weighting.
-                If not provided, pooled text embeddings will be generated from `prompt` input argument.
-            negative_pooled_prompt_embeds (`torch.FloatTensor`, *optional*):
-                Pre-generated negative pooled text embeddings. Can be used to easily tweak text inputs, *e.g.* prompt
-                weighting. If not provided, pooled negative_prompt_embeds will be generated from `negative_prompt`
-                input argument.
-            ip_adapter_image: (`PipelineImageInput`, *optional*): Optional image input to work with IP Adapters.
-            num_images_per_prompt (`int`, *optional*, defaults to 1):
-                The number of images to generate per prompt.
-            eta (`float`, *optional*, defaults to 0.0):
-                Corresponds to parameter eta (η) in the DDIM paper: https://arxiv.org/abs/2010.02502. Only applies to
-                [`schedulers.DDIMScheduler`], will be ignored for others.
-            generator (`torch.Generator`, *optional*):
-                One or a list of [torch generator(s)](https://pytorch.org/docs/stable/generated/torch.Generator.html)
-                to make generation deterministic.
-            latents (`torch.FloatTensor`, *optional*):
-                Pre-generated noisy latents, sampled from a Gaussian distribution, to be used as inputs for image
-                generation. Can be used to tweak the same generation with different prompts. If not provided, a latents
-                tensor will ge generated by sampling using the supplied random `generator`.
-            output_type (`str`, *optional*, defaults to `"pil"`):
-                The output format of the generate image. Choose between
-                [PIL](https://pillow.readthedocs.io/en/stable/): `PIL.Image.Image` or `np.array`.
-            return_dict (`bool`, *optional*, defaults to `True`):
-                Whether or not to return a [`~pipelines.stable_diffusion.StableDiffusionPipelineOutput`] instead of a
-                plain tuple.
-            cross_attention_kwargs (`dict`, *optional*):
-                A kwargs dictionary that if specified is passed along to the `AttentionProcessor` as defined under
-                `self.processor` in
-                [diffusers.models.attention_processor](https://github.com/huggingface/diffusers/blob/main/src/diffusers/models/attention_processor.py).
-            original_size (`Tuple[int]`, *optional*, defaults to (1024, 1024)):
-                If `original_size` is not the same as `target_size` the image will appear to be down- or upsampled.
-                `original_size` defaults to `(height, width)` if not specified. Part of SDXL's micro-conditioning as
-                explained in section 2.2 of
-                [https://huggingface.co/papers/2307.01952](https://huggingface.co/papers/2307.01952).
-            crops_coords_top_left (`Tuple[int]`, *optional*, defaults to (0, 0)):
-                `crops_coords_top_left` can be used to generate an image that appears to be "cropped" from the position
-                `crops_coords_top_left` downwards. Favorable, well-centered images are usually achieved by setting
-                `crops_coords_top_left` to (0, 0). Part of SDXL's micro-conditioning as explained in section 2.2 of
-                [https://huggingface.co/papers/2307.01952](https://huggingface.co/papers/2307.01952).
-            target_size (`Tuple[int]`, *optional*, defaults to (1024, 1024)):
-                For most cases, `target_size` should be set to the desired height and width of the generated image. If
-                not specified it will default to `(height, width)`. Part of SDXL's micro-conditioning as explained in
-                section 2.2 of [https://huggingface.co/papers/2307.01952](https://huggingface.co/papers/2307.01952).
-            negative_original_size (`Tuple[int]`, *optional*, defaults to (1024, 1024)):
-                To negatively condition the generation process based on a specific image resolution. Part of SDXL's
-                micro-conditioning as explained in section 2.2 of
-                [https://huggingface.co/papers/2307.01952](https://huggingface.co/papers/2307.01952). For more
-                information, refer to this issue thread: https://github.com/huggingface/diffusers/issues/4208.
-            negative_crops_coords_top_left (`Tuple[int]`, *optional*, defaults to (0, 0)):
-                To negatively condition the generation process based on a specific crop coordinates. Part of SDXL's
-                micro-conditioning as explained in section 2.2 of
-                [https://huggingface.co/papers/2307.01952](https://huggingface.co/papers/2307.01952). For more
-                information, refer to this issue thread: https://github.com/huggingface/diffusers/issues/4208.
-            negative_target_size (`Tuple[int]`, *optional*, defaults to (1024, 1024)):
-                To negatively condition the generation process based on a target image resolution. It should be as same
-                as the `target_size` for most cases. Part of SDXL's micro-conditioning as explained in section 2.2 of
-                [https://huggingface.co/papers/2307.01952](https://huggingface.co/papers/2307.01952). For more
-                information, refer to this issue thread: https://github.com/huggingface/diffusers/issues/4208.
-            aesthetic_score (`float`, *optional*, defaults to 6.0):
-                Used to simulate an aesthetic score of the generated image by influencing the positive text condition.
-                Part of SDXL's micro-conditioning as explained in section 2.2 of
-                [https://huggingface.co/papers/2307.01952](https://huggingface.co/papers/2307.01952).
-            negative_aesthetic_score (`float`, *optional*, defaults to 2.5):
-                Part of SDXL's micro-conditioning as explained in section 2.2 of
-                [https://huggingface.co/papers/2307.01952](https://huggingface.co/papers/2307.01952). Can be used to
-                simulate an aesthetic score of the generated image by influencing the negative text condition.
-            clip_skip (`int`, *optional*):
-                Number of layers to be skipped from CLIP while computing the prompt embeddings. A value of 1 means that
-                the output of the pre-final layer will be used for computing the prompt embeddings.
-            callback_on_step_end (`Callable`, *optional*):
-                A function that calls at the end of each denoising steps during the inference. The function is called
-                with the following arguments: `callback_on_step_end(self: DiffusionPipeline, step: int, timestep: int,
-                callback_kwargs: Dict)`. `callback_kwargs` will include a list of all tensors as specified by
-                `callback_on_step_end_tensor_inputs`.
-            callback_on_step_end_tensor_inputs (`List`, *optional*):
-                The list of tensor inputs for the `callback_on_step_end` function. The tensors specified in the list
-                will be passed as `callback_kwargs` argument. You will only be able to include variables listed in the
-                `._callback_tensor_inputs` attribute of your pipeline class.
-
-        Examples:
-
-        Returns:
-            [`~pipelines.stable_diffusion.StableDiffusionXLPipelineOutput`] or `tuple`:
-            [`~pipelines.stable_diffusion.StableDiffusionXLPipelineOutput`] if `return_dict` is True, otherwise a
-            `tuple. `tuple. When returning a tuple, the first element is a list with the generated images.
-        """
-
+        #기존에 callback썼던거같음 지금은 안써서 사용하면 에러 출력하는부분
         callback = kwargs.pop("callback", None)
         callback_steps = kwargs.pop("callback_steps", None)
 
@@ -1375,10 +1212,11 @@ class StableDiffusionXLInpaintPipeline(
             )
 
         # 0. Default height and width to unet
+        #unet = 디노이징을 수행하는 신경망
         height = height or self.unet.config.sample_size * self.vae_scale_factor
         width = width or self.unet.config.sample_size * self.vae_scale_factor
 
-        # 1. Check inputs
+        # 1. input값들이 제대로 들어왔는지 체크하고 self로 선언
         self.check_inputs(
             prompt,
             prompt_2,
@@ -1405,7 +1243,7 @@ class StableDiffusionXLInpaintPipeline(
         self._denoising_start = denoising_start
         self._interrupt = False
 
-        # 2. Define call parameters
+        # 2. 프롬프트의 형태에 따라 batchsize를 결정됨.(프롬프트당 이미지 한개생성되니까)
         if prompt is not None and isinstance(prompt, str):
             batch_size = 1
         elif prompt is not None and isinstance(prompt, list):
@@ -1415,11 +1253,12 @@ class StableDiffusionXLInpaintPipeline(
 
         device = self._execution_device
 
-        # 3. Encode input prompt
+        # 3. 프롬프트를 인코딩하는 부분.
+        #텍스트 인코더의 lora_scale의 값을 가져오는부분
         text_encoder_lora_scale = (
             self.cross_attention_kwargs.get("scale", None) if self.cross_attention_kwargs is not None else None
         )
-
+        #encode_prompt함수를 이용해서 프롬프트임베딩을 생성
         (
             prompt_embeds,
             negative_prompt_embeds,
@@ -1445,56 +1284,73 @@ class StableDiffusionXLInpaintPipeline(
         def denoising_value_valid(dnv):
             return isinstance(self.denoising_end, float) and 0 < dnv < 1
 
+        #타임스텝과 추론 단계 수를 계산
         timesteps, num_inference_steps = retrieve_timesteps(self.scheduler, num_inference_steps, device, timesteps)
+        #retrieve_timesteps에서 얻은 타임스텝을 기반으로 디노이징 과정을 조정함 strength이용해서 강도조정.
         timesteps, num_inference_steps = self.get_timesteps(
             num_inference_steps,
             strength,
             device,
             denoising_start=self.denoising_start if denoising_value_valid else None,
         )
-        # check that number of inference steps is not < 1 - as this doesn't make sense
+        #inference steps is not < 1 면 말이안되니까 에러발생시킴
         if num_inference_steps < 1:
             raise ValueError(
                 f"After adjusting the num_inference_steps by strength parameter: {strength}, the number of pipeline"
                 f"steps is {num_inference_steps} which is < 1 and not appropriate for this pipeline."
             )
         # at which timestep to set the initial noise (n.b. 50% if strength is 0.5)
+        #이미지가 여러장 들어오면 각 이미지에 대해서 동일한 time_step을 적용하도록 하는건데 idm-vton은 1장의 이미지고 이미지가 1개씩 들어오니까 여기 1이됨.
         latent_timestep = timesteps[:1].repeat(batch_size * num_images_per_prompt)
         # create a boolean to check if the strength is set to 1. if so then initialise the latents with pure noise
+        #strength가 1.0이면 True가 되어, 초기 잠재 변수를 순수한 노이즈로 초기화하는것. 즉 이미지의 기존 특성을 모두 제거하고 새로운 노이즈에서 시작하도록 설정하는거
         is_strength_max = strength == 1.0
 
         # 5. Preprocess mask and image
+        #사용자가 마진을 지정한 경우 즉 padding_mask_crop이 true인경우
         if padding_mask_crop is not None:
+            #get_crop_region를 이용해서 이미지에서 크롭영역을 계산함.
             crops_coords = self.mask_processor.get_crop_region(mask_image, width, height, pad=padding_mask_crop)
             resize_mode = "fill"
-        else:
+        else: #padding_mask_crop가 None이면 크롭 안함
             crops_coords = None
             resize_mode = "default"
-
+        #original_image에 사람사진 저장해서 원본을 저장함.
         original_image = image
-        init_image = self.image_processor.preprocess(
+        init_image = self.image_processor.preprocess(#이미지를 모델의 입력형식에 맞춰 전처리하는거로 height와 width로 크기조정하고 이미지의 크롭과 resizing을 수행함.
             image, height=height, width=width, crops_coords=crops_coords, resize_mode=resize_mode
         )
+        #전처리한 이미지의 데이터타입을 float32이렇게 맞춤.
         init_image = init_image.to(dtype=torch.float32)
-
+        
+        #mask = mask_image를 모델의 입력형식에 맞춰 전처리하는거로 height와 width로 크기조정하고 이미지의 크롭과 resizing을 수행함.
         mask = self.mask_processor.preprocess(
             mask_image, height=height, width=width, resize_mode=resize_mode, crops_coords=crops_coords
         )
+        #mask_image = 잠재공간변환전 마스킹이미지
+        #masked_image = 잠재공간 변환후 마스킹이미지
         if masked_image_latents is not None:
             masked_image = masked_image_latents
-        elif init_image.shape[1] == 4:
-            # if images are in latent space, we can't mask it
+        elif init_image.shape[1] == 4: #잠재공간에서 일반적으로 4개의 채널을 사용하니까 잠재공간에 있는 이미지를 확인하는조건.
+            #init_image가 잠재공간에 있으면 마스킹 못하니까 건너뜀. 근데 위에코드보면 그럴리 없을거 같음.
             masked_image = None
-        else:
+        else:#masked_image_latents가 제공되지 않았고 init_image가 잠재 공간이 아닌 경우
+            #mask < 0.5 조건을 사용해 마스크가 검은색(값이 0에 가까운 영역)을 선택
+            #(mask < 0.5)는 마스킹하지 않을 부분(검은색 영역)에서는 True 값을 반환하며, 흰색 영역에서는 False를 반환
             masked_image = init_image * (mask < 0.5)
 
-        # 6. Prepare latent variables
-        num_channels_latents = self.vae.config.latent_channels
-        num_channels_unet = self.unet.config.in_channels
-        return_image_latents = num_channels_unet == 4
+            #이 결과로 생성된 masked_image는 마스킹이 적용된 초기 이미지가 됩니다. 흰색으로 표시된 영역은 덮어씌워져 새로운 이미지로 대체될 준비가 된 상태
 
+        # 6. Prepare latent variables
+        num_channels_latents = self.vae.config.latent_channels #잠재공간의 채널수
+        num_channels_unet = self.unet.config.in_channels#unet에서의 채널수
+        return_image_latents = num_channels_unet == 4 #UNet의 채널 수가 4채널인지 확인하여 return_image_latents에 True 또는 False를 할당'
+        #쨌든 unet의 결과를 반환하는거니까 unet채널이 4면 잠재공간에 있는 이미지를 반환하는거고 3이면 실제 사진을 반환하는거
+
+        #self.denoising_start가 None인 경우 add_noise를 True로 설정하여, 디노이징 초기 상태에서 순수한 노이즈로 시작
         add_noise = True if self.denoising_start is None else False
-        latents_outputs = self.prepare_latents(
+
+        latents_outputs = self.prepare_latents(#이미지를 잠재공간으로 변환하고 노이즈를 더한 임베딩반환하는 함수 
             batch_size * num_images_per_prompt,
             num_channels_latents,
             height,
@@ -1511,12 +1367,18 @@ class StableDiffusionXLInpaintPipeline(
             return_image_latents=return_image_latents,
         )
 
+        #latents = 초기입력상태로 완전히 노이즈낀 상태의 잠재공간텐서 ,
+        #image_latents = 사람이미지를 잠재공간으로 변환한 텐서
+        #noise = latents에 더해준 노이즈
         if return_image_latents:
             latents, noise, image_latents = latents_outputs
         else:
             latents, noise = latents_outputs
 
         # 7. Prepare mask latent variables
+        #mask = 원본에서 마스킹한 데이터고
+        #masked_image = init_image와 mask이미지를 비교해서 mask에서 검은색인 부분을 init_image에서 지운거.
+        #negative까지 고려해서 크기를 다시 생성한 mask, 그리고 마스킹이미지를 잠재공간으로 변환한 masked_image_latents
         mask, masked_image_latents = self.prepare_mask_latents(
             mask,
             masked_image,
@@ -1530,14 +1392,17 @@ class StableDiffusionXLInpaintPipeline(
         )
         pose_img = pose_img.to(device=device, dtype=prompt_embeds.dtype)
 
+        #사람의 pose_img를 인코딩해서 잠재공간으로 변환
         pose_img = self.vae.encode(pose_img).latent_dist.sample()
         pose_img = pose_img * self.vae.config.scaling_factor
 
         # pose_img = self._encode_vae_image(pose_img, generator=generator)
 
+        #do_classifier_free_guidance사용하면 포즈이미지 2개가 필요하니까 2배로 복제
         pose_img = (
                 torch.cat([pose_img] * 2) if self.do_classifier_free_guidance else pose_img
         )
+        #옷사진도 잠재공간으로 변환.
         cloth = self._encode_vae_image(cloth, generator=generator)
 
         # # 8. Check that sizes of mask, masked image and latents match
@@ -1557,29 +1422,36 @@ class StableDiffusionXLInpaintPipeline(
         #     raise ValueError(
         #         f"The unet {self.unet.__class__} should have either 4 or 9 input channels, not {self.unet.config.in_channels}."
         #     )
+
         # 8.1 Prepare extra step kwargs.
+        #기타 매개변수들 준비
         extra_step_kwargs = self.prepare_extra_step_kwargs(generator, eta)
 
         # 9. Prepare extra step kwargs. TODO: Logic should ideally just be moved out of the pipeline
-        height, width = latents.shape[-2:]
-        height = height * self.vae_scale_factor
-        width = width * self.vae_scale_factor
+        height, width = latents.shape[-2:] #잠재변수의 마지막 두차원에서 해당 이미지텐서의 높이와 너비를 가져옴
+        height = height * self.vae_scale_factor #scaling_factor로 원본 이미지의 크기와 동일하게조정
+        width = width * self.vae_scale_factor#scaling_factor로 원본 이미지의 크기와 동일하게조정
+        #이 스케일링된 높이와 너비는 VAE에서 잠재 공간을 다시 이미지 공간으로 복원할 때 사용
 
-        original_size = original_size or (height, width)
-        target_size = target_size or (height, width)
+        #original_size**와 **target_size**가 미리 설정되지 않았다면, 방금 계산한 height와 width 값을 사용
+        original_size = original_size or (height, width) #original_size: 원본 이미지의 크기를 지정하는 매개변수
+        target_size = target_size or (height, width) #target_size: 생성할 이미지의 목표 크기를 지정
 
         # 10. Prepare added time ids & embeddings
+        #negative_original_size와 negative_target_size가 미리 설정되지 않았다면, 각각 original_size와 target_size의 값을 사용
         if negative_original_size is None:
             negative_original_size = original_size
         if negative_target_size is None:
             negative_target_size = target_size
 
+
         add_text_embeds = pooled_prompt_embeds
         if self.text_encoder_2 is None:
-            text_encoder_projection_dim = int(pooled_prompt_embeds.shape[-1])
+            text_encoder_projection_dim = int(pooled_prompt_embeds.shape[-1]) #텍스트 임베딩의 차원 수
         else:
             text_encoder_projection_dim = self.text_encoder_2.config.projection_dim
 
+        #여러 정보들을 사용해서 denoising할때 time_step을 조정할때 사용할 변수들 생성
         add_time_ids, add_neg_time_ids = self._get_add_time_ids(
             original_size,
             crops_coords_top_left,
@@ -1592,30 +1464,53 @@ class StableDiffusionXLInpaintPipeline(
             dtype=prompt_embeds.dtype,
             text_encoder_projection_dim=text_encoder_projection_dim,
         )
+        #배치사이즈와 이미지수에맞게 복제해서 동일한 added_timestep을 사용할수있게함.
         add_time_ids = add_time_ids.repeat(batch_size * num_images_per_prompt, 1)
 
+        #do_classifier_free_guidance를 사용할 경우에
+        #부정프롬프트와 긍정프롬프트를 결합해서 사용하는 dfg할때 사용하려고 이렇게 함
         if self.do_classifier_free_guidance:
-            prompt_embeds = torch.cat([negative_prompt_embeds, prompt_embeds], dim=0)
-            add_text_embeds = torch.cat([negative_pooled_prompt_embeds, add_text_embeds], dim=0)
+            prompt_embeds = torch.cat([negative_prompt_embeds, prompt_embeds], dim=0)#prompt_embeds = 자세한 문장임베딩
+            add_text_embeds = torch.cat([negative_pooled_prompt_embeds, add_text_embeds], dim=0) #text = 문맥
             add_neg_time_ids = add_neg_time_ids.repeat(batch_size * num_images_per_prompt, 1)
+            #time_idx도 부정+긍정같이 concat
             add_time_ids = torch.cat([add_neg_time_ids, add_time_ids], dim=0)
 
+        #gpu에 올려주고
         prompt_embeds = prompt_embeds.to(device)
         add_text_embeds = add_text_embeds.to(device)
         add_time_ids = add_time_ids.to(device)
 
+        #실제 idm-vton에서 ip_adapter_image는 옷사진의 원본이고
+        #cloth는 배치차원추가하고 옷사진을 텐서로 만든 데이터
+        #결국 같은 옷사진인데 cloth는 배치처리하기 쉽게 차원추가하고 텐서로 만든거.
         if ip_adapter_image is not None:
+            #이미지 임베딩생성.
             image_embeds = self.prepare_ip_adapter_image_embeds(
                 ip_adapter_image, device, batch_size * num_images_per_prompt
             )
-
-            #project outside for loop
+            #image_embeds를 **UNet의 encoder_hid_proj**을 통해 프로젝션하여 모델의 입력 형식에 맞게 조정하고 프롬프트임베딩과 연산하니까 데이터타입 동일하게 수정
             image_embeds = self.unet.encoder_hid_proj(image_embeds).to(prompt_embeds.dtype)
+
+        #여기까지 최종만들어진 변수들
+        #image_embeds = 사람이미지의 임베딩버전
+        #init_image,original_image = 원본이미지를 전처리한거(모델의 입력사이즈에 맞게 크기바꾸고 crop및 resize하고 데이터타입바꾼거) , 원본이미지
+        #latents, noise, image_latents = 초기입력상태로 완전히 노이즈낀 상태의 잠재공간텐서 , latents에 더해준 노이즈, 사람이미지를 잠재공간으로 변환한 텐서
+        # prompt_embeds = 자세한 문장임베딩
+        #add_text_embeds ,add_neg_time_ids,  add_time_ids  = dfg를 위해서 negative랑 positive프롬프트 임베딩을 concat한거하고 added_timiestpe도 두개 합친거, 프롬프트는 문맥집중, 문장세부집중이 있음
+        #height, width = 원본이미지 혹은 결과로 만들 이미지의 크기
+        #cloth = latent space로 변환한 옷사진
+        #pose_img = 사람포즈이미지
+        #mask, masked_image_latents = 마스킹된사람이미지와 그 사진을 latent공간으로 변환한 텐서
 
 
         # 11. Denoising loop
+        #len(timesteps): 전체 디노이징 과정에서 사용할 타임스텝의 수
+        #num_inference_steps * self.scheduler.order: 실제 디노이징 단계에서 사용할 타임스텝 수를 계산
+        # num_warmup_steps = 디노이징이 본격적으로 시작되기 전에 초기 단계에서 얼마나 많은 워밍업 단계가 필요한지를 정의
         num_warmup_steps = max(len(timesteps) - num_inference_steps * self.scheduler.order, 0)
 
+        #denoising start와 end값이 적절한지 check하는 부분.
         if (
             self.denoising_end is not None
             and self.denoising_start is not None
@@ -1627,6 +1522,7 @@ class StableDiffusionXLInpaintPipeline(
                 f"`denoising_start`: {self.denoising_start} cannot be larger than or equal to `denoising_end`: "
                 + f" {self.denoising_end} when using type float."
             )
+        #denoising_end값이 없거나 유효하지 않을때 denoising_end 값을 계산해서 지정
         elif self.denoising_end is not None and denoising_value_valid(self.denoising_end):
             discrete_timestep_cutoff = int(
                 round(
@@ -1639,27 +1535,34 @@ class StableDiffusionXLInpaintPipeline(
 
         # 11.1 Optionally get Guidance Scale Embedding
         timestep_cond = None
+        #디노이징 과정에서 unet은 각 타입스텝의 정보를 입력으로 받아야하는데 이를 위해서 타입스텝을 고유한 임베딩으로 변환해서 모델에 제공함
+        #그게 timestep_cond이고 proj_dim는 그 임베딩의 차원
         if self.unet.config.time_cond_proj_dim is not None:
             guidance_scale_tensor = torch.tensor(self.guidance_scale - 1).repeat(batch_size * num_images_per_prompt)
+            #가이던스 스케일을 임베딩하여 디바이스와 데이터 타입에 맞게 변환
             timestep_cond = self.get_guidance_scale_embedding(
                 guidance_scale_tensor, embedding_dim=self.unet.config.time_cond_proj_dim
             ).to(device=device, dtype=latents.dtype)
 
 
 
-        self._num_timesteps = len(timesteps)
-        with self.progress_bar(total=num_inference_steps) as progress_bar:
+        self._num_timetseps = len(timesteps) #: timesteps의 길이를 _num_timesteps에 저장
+        with self.progress_bar(total=num_inference_steps) as progress_bar: #타입스텝마다 denoising반복하면서 progress_bar로 진행 상황을 표시
             for i, t in enumerate(timesteps):
+                #interrupt가 True가 되면 denoising을 stop
                 if self.interrupt:
                     continue
                 # expand the latents if we are doing classifier free guidance
+                #do_classifier_free_guidance가 True일 경우, latents를 두 배로 확장하여 텍스트와 비텍스트 조건 모두를 포함
                 latent_model_input = torch.cat([latents] * 2) if self.do_classifier_free_guidance else latents
 
                 # concat latents, mask, masked_image_latents in the channel dimension
+                #latent_model_input을 타임스텝 t에 맞춰 스케일링
                 latent_model_input = self.scheduler.scale_model_input(latent_model_input, t)
 
 
                 # bsz = mask.shape[0]
+                #UNet 채널 수가 13인 경우, mask, masked_image_latents, pose_img를 채널 차원에 결합하여 latent_model_input에 추가 정보를 제공
                 if num_channels_unet == 13:
                     latent_model_input = torch.cat([latent_model_input, mask, masked_image_latents,pose_img], dim=1)
 
@@ -1667,22 +1570,30 @@ class StableDiffusionXLInpaintPipeline(
                 #     latent_model_input = torch.cat([latent_model_input, mask, masked_image_latents], dim=1)
 
                 # predict the noise residual
+
+                #text와 tim_idx를 추가조건으로 설정
                 added_cond_kwargs = {"text_embeds": add_text_embeds, "time_ids": add_time_ids}
+                # IP 어댑터 이미지가 있는 경우 image_embeds도 조건에 추가하여, 추가 이미지 정보도 반영
                 if ip_adapter_image is not None:
                     added_cond_kwargs["image_embeds"] = image_embeds
                 # down,reference_features = self.UNet_Encoder(cloth,t, text_embeds_cloth,added_cond_kwargs= {"text_embeds": pooled_prompt_embeds_c, "time_ids": add_time_ids},return_dict=False)
+                #옷에 대한 텍스트임베딩과 옷그리고 현재 타입스텝 t를 가지고 unet에서 인코딩을 수행한뒤 reference_features를 추출
                 down,reference_features = self.unet_encoder(cloth,t, text_embeds_cloth,return_dict=False)
                 # print(type(reference_features))
                 # print(reference_features)
+
+                #reference_features를 리스트화
                 reference_features = list(reference_features)
                 # print(len(reference_features))
                 # for elem in reference_features:
                 #     print(elem.shape)
                 # exit(1)
+
                 if self.do_classifier_free_guidance:
+                    #인코딩해서 생성된 추출된특징의텐서와 그 텐서와크기가같지만 모두 0으로 채워진텐서를 생성해서 concat해줌.(cfg를 사용하기위해서)
                     reference_features = [torch.cat([torch.zeros_like(d), d]) for d in reference_features]
 
-
+                #UNet을 사용해 현재 타임스텝에서 노이즈를 예측하고, 여러 조건을 반영하여 noise_pred를 생성
                 noise_pred = self.unet(
                     latent_model_input,
                     t,
@@ -1698,32 +1609,42 @@ class StableDiffusionXLInpaintPipeline(
 
 
                 # perform guidance
+                #cfg사용하면
                 if self.do_classifier_free_guidance:
+                    #noise_pred를 두 개로 분리하여 텍스트 조건이 없는 예측(noise_pred_uncond)과 텍스트 조건이 있는 예측(noise_pred_text)으로 나누어줌
                     noise_pred_uncond, noise_pred_text = noise_pred.chunk(2)
+                    #이들 간의 차이에 guidance_scale을 곱하여 조정한 후, 이를 noise_pred로 설정해 최종 예측 노이즈를 반영
                     noise_pred = noise_pred_uncond + self.guidance_scale * (noise_pred_text - noise_pred_uncond)
-
+                #guidance_rescale가 존재하면 guidance_rescale만큼 텍스트 조건의 강도를 더 많이 반영하게함
                 if self.do_classifier_free_guidance and self.guidance_rescale > 0.0:
                     # Based on 3.4. in https://arxiv.org/pdf/2305.08891.pdf
                     noise_pred = rescale_noise_cfg(noise_pred, noise_pred_text, guidance_rescale=self.guidance_rescale)
 
-                # compute the previous noisy sample x_t -> x_t-1
+                # compute the previous noisy sample x_t -> x_t-1 (여기서 t시점에서 t-1시점의 노이즈를 예측하는거)
+                #scheduler.step을 사용해 현재 t 타임스텝에서 예측한 noise_pred로 t-1번째 잠재 변수를 업데이트
                 latents = self.scheduler.step(noise_pred, t, latents, **extra_step_kwargs, return_dict=False)[0]
-
+                
+                #unet의 잠재변수채널이 4면 그대로 잠재공간의 이미지에 노이즈더한거로 저장
                 if num_channels_unet == 4:
-                    init_latents_proper = image_latents
+                    init_latents_proper = image_latents #image_latents는 디노이징이 완료되었을 때 참조할 초기 이미지 잠재 벡터 
                     if self.do_classifier_free_guidance:
-                        init_mask, _ = mask.chunk(2)
+                        init_mask, _ = mask.chunk(2) #mask는 positive와 negative를 고려해서 복제된 두개의 마스킹 이미지이므로 chunk2해서 하나만 가져오는거
                     else:
                         init_mask = mask
-
+                    #현재 타임스텝이 마지막이 아닌 경우, 다음 타임스텝(timesteps[i + 1])을 가져와 init_latents_proper에 노이즈를 추가
                     if i < len(timesteps) - 1:
                         noise_timestep = timesteps[i + 1]
+                        #다음 타임스텝에서 디노이징을 시작할 때 필요한 노이즈가 미리 포함된 초기 잠재 변수init_latents_proper를 준비하는거
+                        #그니까 여기서 다음 step에서 사용될 초기잠재변수를 지금 예측한 노이즈를 통해서 구하는거
                         init_latents_proper = self.scheduler.add_noise(
                             init_latents_proper, noise, torch.tensor([noise_timestep])
                         )
-
+                    #1 - init_mask와 init_mask를 통해 마스킹되지 않은 부분과 마스킹된 부분을 나누고\
+                    #마스크가 적용되지 않은 부분은 init_latents_proper의 값을 유지 즉 원본잠재벡터에 가까운 상태를 반영하는거고
+                    #마스킹된 부분에는 latents값을 적용해서 마스킹된 부분에 디노이징의 결과가 반영되는거
                     latents = (1 - init_mask) * init_latents_proper + init_mask * latents
-
+                    
+                #callback_on_step_end이 정의되어 있다면 해당 타입스텝에서의 모든 변수들을 담아서 저장
                 if callback_on_step_end is not None:
                     callback_kwargs = {}
                     for k in callback_on_step_end_tensor_inputs:
@@ -1742,42 +1663,49 @@ class StableDiffusionXLInpaintPipeline(
                     mask = callback_outputs.pop("mask", mask)
                     masked_image_latents = callback_outputs.pop("masked_image_latents", masked_image_latents)
 
-                # call the callback, if provided
+                # call the callback, if provided - 진행바 업데이트
                 if i == len(timesteps) - 1 or ((i + 1) > num_warmup_steps and (i + 1) % self.scheduler.order == 0):
                     progress_bar.update()
                     if callback is not None and i % callback_steps == 0:
                         step_idx = i // getattr(self.scheduler, "order", 1)
                         callback(step_idx, t, latents)
 
-                if XLA_AVAILABLE:
+                if XLA_AVAILABLE: #TPU 환경에서의 단계 표시
                     xm.mark_step()
 
         if not output_type == "latent":
             # make sure the VAE is in float32 mode, as it overflows in float16
+            #결과가 latent가 아닌 경우에만 이미지를 디코딩함.
+
+            #VAE의 데이터 타입이 float16이고 force_upcast가 설정되어 있으면, needs_upcasting을 True로 설정
             needs_upcasting = self.vae.dtype == torch.float16 and self.vae.config.force_upcast
 
             if needs_upcasting:
+                #self.upcast_vae()를 호출하여 VAE를 float32로 변환
                 self.upcast_vae()
+                #latents 텐서도 VAE와 같은 float32 형식으로 변환
                 latents = latents.to(next(iter(self.vae.post_quant_conv.parameters())).dtype)
-
+            #latent를 디코딩해서 이미지가져옴.
             image = self.vae.decode(latents / self.vae.config.scaling_factor, return_dict=False)[0]
 
-            # cast back to fp16 if needed
+            # cast back to fp16 if needed - float16으로 다시 다운캐스팅
             if needs_upcasting:
                 self.vae.to(dtype=torch.float16)
         # else:
         #     return StableDiffusionXLPipelineOutput(images=latents)
 
-
+        #이미지 후처리작업
         image = self.image_processor.postprocess(image, output_type=output_type)
 
+        #crop안하니까 필요 x
         if padding_mask_crop is not None:
             image = [self.image_processor.apply_overlay(mask_image, original_image, i, crops_coords) for i in image]
 
-        # Offload all models
+        # 모델과 관련된 리소스를 해제
         self.maybe_free_model_hooks()
 
-        # if not return_dict:
+        # 필요에 따라 다중 이미지를 반환할 수 있도록, 하나의 이미지여도 튜플 형태로 감싸서 반환
         return (image,)
+    
 
         # return StableDiffusionXLPipelineOutput(images=image)
