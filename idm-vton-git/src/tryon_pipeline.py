@@ -881,17 +881,26 @@ class StableDiffusionXLInpaintPipeline(
 
     # Copied from diffusers.pipelines.stable_diffusion_xl.pipeline_stable_diffusion_xl_img2img.StableDiffusionXLImg2ImgPipeline.get_timesteps
     def get_timesteps(self, num_inference_steps, strength, device, denoising_start=None):
-        # get the original timestep using init_timestep
+        #매개변수 순서대로 - diffusion step의 수, 강도, denoising의 시작점.
+
+        #denoising시작점이 정의안되어있을경우 강도(strength)와 디노이징 스텝수(num_inference_steps)를 겨로해서 init_time_step생성
         if denoising_start is None:
+            #init_timestep은 "추론을 시작할 지점까지의 남은 단계 수
             init_timestep = min(int(num_inference_steps * strength), num_inference_steps)
+            #t_start는 실제 추론을 "어디서부터 시작할지"를 결정하는 인덱스
             t_start = max(num_inference_steps - init_timestep, 0)
+            #denoising시작점이 주어지면 t_start = 0
         else:
             t_start = 0
 
+        #스케쥴러의 타입스텝 리스트에서 t_start이부터의 값을 슬라이싱하여 timesteps에 할당
+        #self.scheduler.order = 각 step을 몇번씩 반복해서 denoising할껀가를 해주는 값으로 
+        #각 단계에서의 계산이 더욱 정밀하게 이루어지도록 함
         timesteps = self.scheduler.timesteps[t_start * self.scheduler.order :]
 
         # Strength is irrelevant if we directly request a timestep to start at;
         # that is, strength is determined by the denoising_start instead.
+        #특정 시점에서 추론을 시작할 경우 즉 denoising_start가 none이 아닌경우
         if denoising_start is not None:
             discrete_timestep_cutoff = int(
                 round(
@@ -914,6 +923,8 @@ class StableDiffusionXLInpaintPipeline(
             timesteps = timesteps[-num_inference_steps:]
             return timesteps, num_inference_steps
 
+        #timestels = 모든 시점의 리스트(반복포함 즉 [0,0,1,1,2,2,3,3,])이고
+        #num_inference_steps= 총 몇단계로 추론할건지 즉 위의 예로 4단계로 추론하는것.(반복제외)
         return timesteps, num_inference_steps - t_start
 
     # Copied from diffusers.pipelines.stable_diffusion_xl.pipeline_stable_diffusion_xl_img2img.StableDiffusionXLImg2ImgPipeline._get_add_time_ids
