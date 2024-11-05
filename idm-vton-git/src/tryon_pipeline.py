@@ -927,7 +927,7 @@ class StableDiffusionXLInpaintPipeline(
         #num_inference_steps= 총 몇단계로 추론할건지 즉 위의 예로 4단계로 추론하는것.(반복제외)
         return timesteps, num_inference_steps - t_start
 
-    # Copied from diffusers.pipelines.stable_diffusion_xl.pipeline_stable_diffusion_xl_img2img.StableDiffusionXLImg2ImgPipeline._get_add_time_ids
+    # 입력값의 크기나 좌표등 추가적인 정보를 시간임베딩으로 변환하는 함수 ( 일단보류)
     def _get_add_time_ids(
         self,
         original_size,
@@ -1001,6 +1001,7 @@ class StableDiffusionXLInpaintPipeline(
             self.vae.decoder.mid_block.to(dtype)
 
     # Copied from diffusers.pipelines.stable_diffusion.pipeline_stable_diffusion.StableDiffusionPipeline.enable_freeu
+
     # Unet에서의 Feature Saturation 문제를 해결하기 위한 FreeU 구조를 활성화시키는 함수
     def enable_freeu(self, s1: float, s2: float, b1: float, b2: float):
         r"""Enables the FreeU mechanism as in https://arxiv.org/abs/2309.11497.
@@ -1020,10 +1021,11 @@ class StableDiffusionXLInpaintPipeline(
             b1 (`float`): Scaling factor for stage 1 to amplify the contributions of backbone features.
             b2 (`float`): Scaling factor for stage 2 to amplify the contributions of backbone features.
         """
+        #freeU를 사용하려면 self가 unet을 가지고 있어야함. unet은 주로 이미지 생성 모델의 백본 역할을 하는 신경망
         if not hasattr(self, "unet"):
             raise ValueError("The pipeline must have `unet` for using FreeU.")
         self.unet.enable_freeu(s1=s1, s2=s2, b1=b1, b2=b2)
-
+        
     # Copied from diffusers.pipelines.stable_diffusion.pipeline_stable_diffusion.StableDiffusionPipeline.disable_freeu
     # Unet에서의 Feature Saturation 문제를 해결하기 위한 FreeU 구조를 비활성화시키는 함수
     def disable_freeu(self):
