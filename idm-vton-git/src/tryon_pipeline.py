@@ -1065,36 +1065,6 @@ class StableDiffusionXLInpaintPipeline(
             self.vae.fuse_qkv_projections()
             self.vae.set_attn_processor(FusedAttnProcessor2_0())
 
-    # Copied from diffusers.pipelines.stable_diffusion_xl.pipeline_stable_diffusion_xl.StableDiffusionXLPipeline.unfuse_qkv_projections
-    # Attention Module에서 뭉쳐 놓은 Query, Key, Value 쌍에 대해서 다시 각각 사용하기 위해 합친 것을 풀어주는 함수.
-    def unfuse_qkv_projections(self, unet: bool = True, vae: bool = True):
-        """Disable QKV projection fusion if enabled.
-
-        <Tip warning={true}>
-
-        This API is 🧪 experimental.
-
-        </Tip>
-
-        Args:
-            unet (`bool`, defaults to `True`): To apply fusion on the UNet.
-            vae (`bool`, defaults to `True`): To apply fusion on the VAE.
-
-        """
-        if unet:
-            if not self.fusing_unet:
-                logger.warning("The UNet was not initially fused for QKV projections. Doing nothing.")
-            else:
-                self.unet.unfuse_qkv_projections()
-                self.fusing_unet = False
-
-        if vae:
-            if not self.fusing_vae:
-                logger.warning("The VAE was not initially fused for QKV projections. Doing nothing.")
-            else:
-                self.vae.unfuse_qkv_projections()
-                self.fusing_vae = False
-
     # Copied from diffusers.pipelines.latent_consistency_models.pipeline_latent_consistency_text2img.LatentConsistencyModelPipeline.get_guidance_scale_embedding
     # 임베딩 벡터를 생성하기 위한 함수. Guidance를 생성하기 위해 사용된다.
     # w가 입력 텐서로 사용 / embedding_dim, dtype은 생성되는 임베딩 벡터에 대한 설명이다.
