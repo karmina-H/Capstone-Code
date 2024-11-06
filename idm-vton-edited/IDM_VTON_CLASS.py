@@ -266,7 +266,7 @@ def start_tryon(human_img,masked_img,garm_img,garment_des,is_checked,is_checked_
                     )[0]
 
     #edit된 이미지 임베딩 구하는 부분.
-    edited_imaged_embed = 
+    edited_image_hidden_states, _ = pipe.encode_image(images[0], device, 1, output_hidden_states=True)
 
     #크롭되었으면 복구하는데 우리 크롭안할꺼
     if is_checked_crop:
@@ -275,7 +275,7 @@ def start_tryon(human_img,masked_img,garm_img,garment_des,is_checked,is_checked_
         return human_img_orig, mask_gray
     else:
         #diffusion된 이미지와 마스크된이미지를 반환.
-        return images[0], edited_imaged_embed, mask_gray
+        return images[0], edited_image_hidden_states, mask_gray
     # return images[0], mask_gray
 
 def start_tryon_extra(human_img,masked_img,garm_img,garment_des,is_checked,is_checked_crop,denoise_steps,seed,added_embed):
