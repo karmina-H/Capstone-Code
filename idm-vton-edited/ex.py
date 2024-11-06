@@ -1,6 +1,6 @@
 from IDM_VTON_CLASS import IDM_VTON
 from PIL import Image
-
+import torch
 # 'image.jpg' 파일을 불러와서 PIL 이미지 객체로 변환
 ex1 = IDM_VTON() 
 human_img__front_path = 'dict_img.jpg' #사람 앞면사진
@@ -34,10 +34,27 @@ garment_des = '베이지색 깔끔하고 스타일리쉬한 옷'
 
 
 
-# 앞면 혹은 뒷면 이미지 생성
-img, d = ex1.front_or_back(human_img, masked_human_img, garm_img, garment_des, False, True, 40, 42) #is_front가 앞면이면 true뒷면이면 false
-#앞면 뒷면 제외 이미지 생성
-img, d = ex1.extra(human_img, masked_human_img, garm_img, garment_des, False, True, 40, 42, added_embed)
+# 앞면 이미지 생성
+img, front_embed, _ = ex1.tryon_front_or_back(human_img__front, masked_human_img, garm_img_front, garment_des, False, True, 40, 42) 
+
+# 뒷면 이미지 생성
+img, back_embed, _  = ex1.tryon_front_or_back(human_img__back_path, masked_human_img, garm_img_back, garment_des, False, True, 40, 42) 
+
+
+#방법 1 단순히 합친다
+combined_embed = torch.cat((front_embed, back_embed), dim=1)
+#방법 2 앞면과 뒷면 어디에 가깝냐에 따라 동적으로 가중치를 조절해서 concat한다.
+front_weight = 0.7
+back_weight = 0.3
+
+weighted_front = front_weight * front_embed
+weighted_back = back_weight * back_embed
+combined_embed = torch.cat((weighted_front, weighted_back), dim=1)
+
+#앞면 뒷면 제외 이미지 생성 - 이거는 앞면 뒷면 맞춰서 넣어주는거 가우시안에디터에서 해야될듯
+
+#added_embed = front_embed와 back_embed를 concat해서 둘다 고려해주기
+img, d = ex1.tryon_extra(human_img__extra, masked_human_img, garm_img_front, garment_des, False, True, 40, 42, combined_embed)
 
 
 

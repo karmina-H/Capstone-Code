@@ -283,12 +283,12 @@ def start_tryon_extra(human_img,masked_img,garm_img,garment_des,is_checked,is_ch
 
 
 class IDM_VTON:
-    def front_or_back(self,human_img,masked_img,garm_img,garment_des,is_checked,is_checked_crop,denoise_steps,seed):
+    def tryon_front_or_back(self,human_img,masked_img,garm_img,garment_des,is_checked,is_checked_crop,denoise_steps,seed):
         #이거 앞면 이나 뒷면 생성하는건데 start_tryon에서 return에서 임베딩주는거 하나 추가하기
         edited_imaged, edited_imaged_imbed, mask_gray = start_tryon(human_img,masked_img,garm_img,garment_des,is_checked,is_checked_crop,denoise_steps)
         return edited_imaged,mask_gray
     
-    def extra(self,human_img,masked_img,garm_img,garment_des,is_checked,is_checked_crop,denoise_steps,seed, added_embed):
+    def tryon_extra(self,human_img,masked_img,garm_img,garment_des,is_checked,is_checked_crop,denoise_steps,seed, added_embed):
         #added_embed - 그전에 생성한 앞면 혹은 뒷면 사람의 임베딩벡터
         #start_tryon_extra를 앞면혹은 뒷면 벡터를 고려해서 diffusion하는걸로 다시짜기
         edited_imaged, mask_gray = start_tryon_extra(human_img,masked_img,garm_img,garment_des,is_checked,is_checked_crop,denoise_steps,seed,added_embed)
