@@ -146,7 +146,7 @@ pipe.unet_encoder = UNet_Encoder
         
 
 #이미지 diffusion 실행하는 함수
-def start_tryon(human_img,masked_img,garm_img,garment_des,is_checked,is_checked_crop,denoise_steps,seed):
+def start_tryon(human_img,masked_img,garm_img,garment_des,is_checked,is_checked_crop,denoise_steps,seed, is_front):
     openpose_model.preprocessor.body_estimation.model.to(device)
     pipe.to(device)
     pipe.unet_encoder.to(device)
@@ -265,6 +265,9 @@ def start_tryon(human_img,masked_img,garm_img,garment_des,is_checked,is_checked_
                         guidance_scale=2.0,
                     )[0]
 
+    #edit된 이미지 임베딩 구하는 부분.
+    edited_imaged_embed = 
+
     #크롭되었으면 복구하는데 우리 크롭안할꺼
     if is_checked_crop:
         out_img = images[0].resize(crop_size)        
@@ -272,14 +275,24 @@ def start_tryon(human_img,masked_img,garm_img,garment_des,is_checked,is_checked_
         return human_img_orig, mask_gray
     else:
         #diffusion된 이미지와 마스크된이미지를 반환.
-        return images[0], mask_gray
+        return images[0], edited_imaged_embed, mask_gray
     # return images[0], mask_gray
 
+def start_tryon_extra(human_img,masked_img,garm_img,garment_des,is_checked,is_checked_crop,denoise_steps,seed,added_embed):
+    return 0 #added_embed를 이용해서 구하도록 start_tryon 수정하기
 
 
 class IDM_VTON:
-    def __call__(self,human_img,masked_img,garm_img,garment_des,is_checked,is_checked_crop,denoise_steps,seed):
-        edited_imaged, mask_gray = start_tryon(human_img,masked_img,garm_img,garment_des,is_checked,is_checked_crop,denoise_steps,seed)
+    def front_or_back(self,human_img,masked_img,garm_img,garment_des,is_checked,is_checked_crop,denoise_steps,seed):
+        #이거 앞면 이나 뒷면 생성하는건데 start_tryon에서 return에서 임베딩주는거 하나 추가하기
+        edited_imaged, edited_imaged_imbed, mask_gray = start_tryon(human_img,masked_img,garm_img,garment_des,is_checked,is_checked_crop,denoise_steps)
         return edited_imaged,mask_gray
+    
+    def extra(self,human_img,masked_img,garm_img,garment_des,is_checked,is_checked_crop,denoise_steps,seed, added_embed):
+        #added_embed - 그전에 생성한 앞면 혹은 뒷면 사람의 임베딩벡터
+        #start_tryon_extra를 앞면혹은 뒷면 벡터를 고려해서 diffusion하는걸로 다시짜기
+        edited_imaged, mask_gray = start_tryon_extra(human_img,masked_img,garm_img,garment_des,is_checked,is_checked_crop,denoise_steps,seed,added_embed)
+        return edited_imaged,mask_gray
+
         
             

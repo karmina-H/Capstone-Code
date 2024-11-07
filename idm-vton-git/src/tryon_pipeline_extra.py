@@ -286,8 +286,6 @@ class StableDiffusionXLInpaintPipeline(
             feature_extractor=feature_extractor,
             scheduler=scheduler,
         )
-        self.front_embedding = None
-        self.back_embedding = None
         self.register_to_config(force_zeros_for_empty_prompt=force_zeros_for_empty_prompt)
         self.register_to_config(requires_aesthetics_score=requires_aesthetics_score)
         self.vae_scale_factor = 2 ** (len(self.vae.config.block_out_channels) - 1)
@@ -300,13 +298,6 @@ class StableDiffusionXLInpaintPipeline(
     #슬라이싱 -> 특정한 차원을 기준으로 데이터를 나눠서처리 -> 배치크기가 클 때 적합함.
     #타일링 -> 이미지가 1024*1024이면 이걸 256*256이렇게 해서 4번처리하는것 -> 고해상도일때 적합
     #두 방법 모두 gpu메모리를 절약하기위한 방법
-
-    def alloc_front_embedding(self, front_embedding: torch.Tensor = None, back_embedding: torch.Tensor = None):
-        if front_embedding is not None:
-            self.front_embedding = front_embedding
-        if back_embedding is not None:
-            self.back_embedding = back_embedding
-
 
     # vae의 슬라이싱 활성화
     def enable_vae_slicing(self):
