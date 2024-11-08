@@ -261,7 +261,7 @@ class StableDiffusionXLInpaintPipeline(
         tokenizer: CLIPTokenizer, # 텍스트 데이터를 CLIP 모델의 입력 형식에 맞게 토큰화하는 도구입니다.
         tokenizer_2: CLIPTokenizer, #두 번째 텍스트 인코더와 호환되는 토크나이저입니다.
         unet: UNet2DConditionModel, #이미지의 노이즈를 제거하는 U-Net 모델로, 인코딩된 이미지 잠재 벡터를 사용해 디노이징을 수행합
-        unet_encoder: UNet2DConditionModel,#garmentnet 신경망
+        unet_encoder: UNet2DConditionModel,#CLIP 기반의 이미지 인코더로, 입력 이미지를 잠재 공간에 맞게 변환하여 파이프라인에서 처리할 수 있는 형태로 만듭니다.
         scheduler: KarrasDiffusionSchedulers,#U-Net과 함께 노이즈 제거 단계(추론 단계)를 관리하는 스케줄러입니다. 다양한 스케줄러 유형(예: DDIMScheduler, LMSDiscreteScheduler, PNDMScheduler)을 사용할 수 있습니다.
         image_encoder: CLIPVisionModelWithProjection = None,#CLIP 기반의 이미지 인코더로, 입력 이미지를 잠재 공간에 맞게 변환하여 파이프라인에서 처리할 수 있는 형태로 만듭니다.
         feature_extractor: CLIPImageProcessor = None,#CLIP 모델의 이미지 처리 요구사항에 맞게 이미지를 전처리하여 image_encoder에 전달할 수 있도록 도와줍니다
@@ -298,7 +298,6 @@ class StableDiffusionXLInpaintPipeline(
     #슬라이싱 -> 특정한 차원을 기준으로 데이터를 나눠서처리 -> 배치크기가 클 때 적합함.
     #타일링 -> 이미지가 1024*1024이면 이걸 256*256이렇게 해서 4번처리하는것 -> 고해상도일때 적합
     #두 방법 모두 gpu메모리를 절약하기위한 방법
-
 
     # vae의 슬라이싱 활성화
     def enable_vae_slicing(self):
@@ -1174,7 +1173,7 @@ class StableDiffusionXLInpaintPipeline(
         negative_pooled_prompt_embeds: Optional[torch.FloatTensor] = None,
         ip_adapter_image: Optional[PipelineImageInput] = None,#입력 이미지의 스타일이나 색감을 생성 이미지에 반영할 때 사용됨
         output_type: Optional[str] = "pil",#생성된 이미지의 출력 형식으로, PIL.Image.Image 또는 np.array 중에서 선택(기본값은 pil)
-        cloth =None, #옷 사진
+        cloth =None, #입힐 옷 사진
         pose_img = None,#사람이미지에 대한 pose이미지
         text_embeds_cloth=None,#옷에대한 설명 프롬프트(임베딩버전)
         return_dict: bool = True,
@@ -1603,7 +1602,7 @@ class StableDiffusionXLInpaintPipeline(
                     cross_attention_kwargs=self.cross_attention_kwargs,
                     added_cond_kwargs=added_cond_kwargs,
                     return_dict=False,
-                    garment_features=reference_features, #garment net에서 생성된 feature를 통해서 tryonnet에 여기서 전달
+                    garment_features=reference_features,
                 )[0]
                 # noise_pred = self.unet(latent_model_input, t, 
                 #                             prompt_embeds,timestep_cond=timestep_cond,cross_attention_kwargs=self.cross_attention_kwargs,added_cond_kwargs=added_cond_kwargs,down_block_additional_attn=down ).sample

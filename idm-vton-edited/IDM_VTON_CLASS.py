@@ -133,6 +133,8 @@ tensor_transfrom = transforms.Compose(
             ]
     )
 
+#tryonPipeline = tryon_pipeline.py에 있는 StableDiffusionXLInpaintPipeline를 의미함 
+#그리고 unet은 tryon net을 이미하고 unet_encoder는 garment net을 의미함
 pipe = TryonPipeline.from_pretrained(
         base_path,
         unet=unet,

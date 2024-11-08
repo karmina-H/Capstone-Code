@@ -146,7 +146,7 @@ pipe.unet_encoder = UNet_Encoder
         
 
 #이미지 diffusion 실행하는 함수
-def start_tryon(human_img,masked_img,garm_img,garment_des,is_checked,is_checked_crop,denoise_steps,seed):
+def start_tryon(human_img,masked_img,garm_img,garment_des,is_checked,is_checked_crop,denoise_steps,seed, is_front):
     openpose_model.preprocessor.body_estimation.model.to(device)
     pipe.to(device)
     pipe.unet_encoder.to(device)
@@ -265,6 +265,7 @@ def start_tryon(human_img,masked_img,garm_img,garment_des,is_checked,is_checked_
                         guidance_scale=2.0,
                     )[0]
 
+
     #크롭되었으면 복구하는데 우리 크롭안할꺼
     if is_checked_crop:
         out_img = images[0].resize(crop_size)        
@@ -274,7 +275,6 @@ def start_tryon(human_img,masked_img,garm_img,garment_des,is_checked,is_checked_
         #diffusion된 이미지와 마스크된이미지를 반환.
         return images[0], mask_gray
     # return images[0], mask_gray
-
 
 
 class IDM_VTON:
