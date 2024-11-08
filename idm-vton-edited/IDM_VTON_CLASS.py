@@ -5,6 +5,8 @@ from PIL import Image
 from src.tryon_pipeline import StableDiffusionXLInpaintPipeline as TryonPipeline
 from src.unet_hacked_garmnet import UNet2DConditionModel as UNet2DConditionModel_ref
 from src.unet_hacked_tryon import UNet2DConditionModel
+
+
 from transformers import (
     CLIPImageProcessor,
     CLIPVisionModelWithProjection,
@@ -58,14 +60,17 @@ def pil_to_binary_mask(pil_image, threshold=0):
     #mask 배열을 PIL 이미지로 변환하여 output_mask에 저장
     output_mask = Image.fromarray(mask)
     #결과반환
-    return output_mask
+    return output_mask 
 
+
+#옷사진에서 활용하는 신경망 - UNet2DConditionModel_ref
+#tryon - UNet2DConditionModel
 
 #pretrained모델 불러오는 부분
 base_path = 'yisol/IDM-VTON'
 example_path = os.path.join(os.path.dirname(__file__), 'example')
 
-unet = UNet2DConditionModel.from_pretrained(
+unet = UNet2DConditionModel.from_pretrained( #tryon net = UNet2DConditionModel
     base_path,
     subfolder="unet",
     torch_dtype=torch.float16,
@@ -106,7 +111,7 @@ vae = AutoencoderKL.from_pretrained(base_path,
 )
 
 # "stabilityai/stable-diffusion-xl-base-1.0",
-UNet_Encoder = UNet2DConditionModel_ref.from_pretrained(
+UNet_Encoder = UNet2DConditionModel_ref.from_pretrained( #garment net = UNet2DConditionModel_ref
     base_path,
     subfolder="unet_encoder",
     torch_dtype=torch.float16,
