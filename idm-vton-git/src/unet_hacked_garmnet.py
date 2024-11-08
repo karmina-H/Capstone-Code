@@ -78,97 +78,128 @@ class UNet2DConditionOutput(BaseOutput):
 
 
 class UNet2DConditionModel(ModelMixin, ConfigMixin, UNet2DConditionLoadersMixin):
-    r"""
-    A conditional 2D UNet model that takes a noisy sample, conditional state, and a timestep and returns a sample
-    shaped output.
+    """
+    조건부 2D Unet Model(앞에 * 붙은 것만 필수)
 
-    This model inherits from [`ModelMixin`]. Check the superclass documentation for it's generic methods implemented
-    for all models (such as downloading or saving).
+    *sample_size (int or Tuple[int, int] | 기본값: (None))
+        입출력 샘플의 높이와 너비.
 
-    Parameters:
-        sample_size (`int` or `Tuple[int, int]`, *optional*, defaults to `None`):
-            Height and width of input/output sample.
-        in_channels (`int`, *optional*, defaults to 4): Number of channels in the input sample.
-        out_channels (`int`, *optional*, defaults to 4): Number of channels in the output.
-        center_input_sample (`bool`, *optional*, defaults to `False`): Whether to center the input sample.
-        flip_sin_to_cos (`bool`, *optional*, defaults to `False`):
-            Whether to flip the sin to cos in the time embedding.
-        freq_shift (`int`, *optional*, defaults to 0): The frequency shift to apply to the time embedding.
-        down_block_types (`Tuple[str]`, *optional*, defaults to `("CrossAttnDownBlock2D", "CrossAttnDownBlock2D", "CrossAttnDownBlock2D", "DownBlock2D")`):
-            The tuple of downsample blocks to use.
-        mid_block_type (`str`, *optional*, defaults to `"UNetMidBlock2DCrossAttn"`):
-            Block type for middle of UNet, it can be one of `UNetMidBlock2DCrossAttn`, `UNetMidBlock2D`, or
-            `UNetMidBlock2DSimpleCrossAttn`. If `None`, the mid block layer is skipped.
-        up_block_types (`Tuple[str]`, *optional*, defaults to `("UpBlock2D", "CrossAttnUpBlock2D", "CrossAttnUpBlock2D", "CrossAttnUpBlock2D")`):
-            The tuple of upsample blocks to use.
-        only_cross_attention(`bool` or `Tuple[bool]`, *optional*, default to `False`):
-            Whether to include self-attention in the basic transformer blocks, see
-            [`~models.attention.BasicTransformerBlock`].
-        block_out_channels (`Tuple[int]`, *optional*, defaults to `(320, 640, 1280, 1280)`):
-            The tuple of output channels for each block.
-        layers_per_block (`int`, *optional*, defaults to 2): The number of layers per block.
-        downsample_padding (`int`, *optional*, defaults to 1): The padding to use for the downsampling convolution.
-        mid_block_scale_factor (`float`, *optional*, defaults to 1.0): The scale factor to use for the mid block.
-        dropout (`float`, *optional*, defaults to 0.0): The dropout probability to use.
-        act_fn (`str`, *optional*, defaults to `"silu"`): The activation function to use.
-        norm_num_groups (`int`, *optional*, defaults to 32): The number of groups to use for the normalization.
-            If `None`, normalization and activation layers is skipped in post-processing.
-        norm_eps (`float`, *optional*, defaults to 1e-5): The epsilon to use for the normalization.
-        cross_attention_dim (`int` or `Tuple[int]`, *optional*, defaults to 1280):
-            The dimension of the cross attention features.
-        transformer_layers_per_block (`int`, `Tuple[int]`, or `Tuple[Tuple]` , *optional*, defaults to 1):
-            The number of transformer blocks of type [`~models.attention.BasicTransformerBlock`]. Only relevant for
-            [`~models.unet_2d_blocks.CrossAttnDownBlock2D`], [`~models.unet_2d_blocks.CrossAttnUpBlock2D`],
-            [`~models.unet_2d_blocks.UNetMidBlock2DCrossAttn`].
-       reverse_transformer_layers_per_block : (`Tuple[Tuple]`, *optional*, defaults to None):
-            The number of transformer blocks of type [`~models.attention.BasicTransformerBlock`], in the upsampling
-            blocks of the U-Net. Only relevant if `transformer_layers_per_block` is of type `Tuple[Tuple]` and for
-            [`~models.unet_2d_blocks.CrossAttnDownBlock2D`], [`~models.unet_2d_blocks.CrossAttnUpBlock2D`],
-            [`~models.unet_2d_blocks.UNetMidBlock2DCrossAttn`].
-        encoder_hid_dim (`int`, *optional*, defaults to None):
-            If `encoder_hid_dim_type` is defined, `encoder_hidden_states` will be projected from `encoder_hid_dim`
-            dimension to `cross_attention_dim`.
-        encoder_hid_dim_type (`str`, *optional*, defaults to `None`):
-            If given, the `encoder_hidden_states` and potentially other embeddings are down-projected to text
-            embeddings of dimension `cross_attention` according to `encoder_hid_dim_type`.
-        attention_head_dim (`int`, *optional*, defaults to 8): The dimension of the attention heads.
-        num_attention_heads (`int`, *optional*):
-            The number of attention heads. If not defined, defaults to `attention_head_dim`
-        resnet_time_scale_shift (`str`, *optional*, defaults to `"default"`): Time scale shift config
-            for ResNet blocks (see [`~models.resnet.ResnetBlock2D`]). Choose from `default` or `scale_shift`.
-        class_embed_type (`str`, *optional*, defaults to `None`):
-            The type of class embedding to use which is ultimately summed with the time embeddings. Choose from `None`,
-            `"timestep"`, `"identity"`, `"projection"`, or `"simple_projection"`.
-        addition_embed_type (`str`, *optional*, defaults to `None`):
-            Configures an optional embedding which will be summed with the time embeddings. Choose from `None` or
-            "text". "text" will use the `TextTimeEmbedding` layer.
-        addition_time_embed_dim: (`int`, *optional*, defaults to `None`):
-            Dimension for the timestep embeddings.
-        num_class_embeds (`int`, *optional*, defaults to `None`):
-            Input dimension of the learnable embedding matrix to be projected to `time_embed_dim`, when performing
-            class conditioning with `class_embed_type` equal to `None`.
-        time_embedding_type (`str`, *optional*, defaults to `positional`):
-            The type of position embedding to use for timesteps. Choose from `positional` or `fourier`.
-        time_embedding_dim (`int`, *optional*, defaults to `None`):
-            An optional override for the dimension of the projected time embedding.
-        time_embedding_act_fn (`str`, *optional*, defaults to `None`):
-            Optional activation function to use only once on the time embeddings before they are passed to the rest of
-            the UNet. Choose from `silu`, `mish`, `gelu`, and `swish`.
-        timestep_post_act (`str`, *optional*, defaults to `None`):
-            The second activation function to use in timestep embedding. Choose from `silu`, `mish` and `gelu`.
-        time_cond_proj_dim (`int`, *optional*, defaults to `None`):
-            The dimension of `cond_proj` layer in the timestep embedding.
-        conv_in_kernel (`int`, *optional*, default to `3`): The kernel size of `conv_in` layer. conv_out_kernel (`int`,
-        *optional*, default to `3`): The kernel size of `conv_out` layer. projection_class_embeddings_input_dim (`int`,
-        *optional*): The dimension of the `class_labels` input when
-            `class_embed_type="projection"`. Required when `class_embed_type="projection"`.
-        class_embeddings_concat (`bool`, *optional*, defaults to `False`): Whether to concatenate the time
-            embeddings with the class embeddings.
-        mid_block_only_cross_attention (`bool`, *optional*, defaults to `None`):
-            Whether to use cross attention with the mid block when using the `UNetMidBlock2DSimpleCrossAttn`. If
-            `only_cross_attention` is given as a single boolean and `mid_block_only_cross_attention` is `None`, the
-            `only_cross_attention` value is used as the value for `mid_block_only_cross_attention`. Default to `False`
-            otherwise.
+    in_channels (int | 기본값: (4))
+        입력 샘플의 채널 수.
+
+    out_channels (int | 기본값: (4))
+        출력 샘플의 채널 수.
+
+    center_input_sample (bool | 기본값: (False))
+        입력 샘플을 중심에 맞출지 여부.
+
+    flip_sin_to_cos (bool | 기본값: (False))
+        타임 임베딩에서 sin을 cos으로 전환할지 여부.
+
+    freq_shift (int | 기본값: (0))
+        타임 임베딩에 적용할 주파수 이동.
+
+    down_block_types (Tuple[str] | 기본값: ("CrossAttnDownBlock2D", "CrossAttnDownBlock2D", "CrossAttnDownBlock2D", "DownBlock2D"))
+        사용할 다운샘플 블록의 유형.
+
+    mid_block_type (str | 기본값: ("UNetMidBlock2DCrossAttn"))
+        UNet 중간 블록의 유형.
+
+    up_block_types (Tuple[str] | 기본값: ("UpBlock2D", "CrossAttnUpBlock2D", "CrossAttnUpBlock2D", "CrossAttnUpBlock2D"))
+        사용할 업샘플 블록의 유형.
+
+    only_cross_attention (bool or Tuple[bool] | 기본값: (False))
+        기본 transformer 블록에 셀프 어텐션을 포함할지 여부.
+
+    block_out_channels (Tuple[int] | 기본값: (320, 640, 1280, 1280))
+        각 블록의 출력 채널 수.
+
+    layers_per_block (int | 기본값: (2))
+        각 블록당 레이어 수.
+
+    downsample_padding (int | 기본값: (1))
+        다운샘플링 컨볼루션에 사용할 패딩.
+
+    mid_block_scale_factor (float | 기본값: (1.0))
+        중간 블록에 사용할 스케일 팩터.
+
+    dropout (float | 기본값: (0.0))
+        드롭아웃 확률.
+
+    act_fn (str | 기본값: ("silu"))
+        사용할 활성화 함수.
+
+    norm_num_groups (int | 기본값: (32))
+        정규화에 사용할 그룹 수.
+
+    norm_eps (float | 기본값: (1e-5))
+        정규화에 사용할 epsilon 값.
+
+    cross_attention_dim (int or Tuple[int] | 기본값: (1280))
+        크로스 어텐션 피처의 차원.
+
+    transformer_layers_per_block (int, Tuple[int], or Tuple[Tuple] | 기본값: (1))
+        각 블록당 BasicTransformerBlock의 수.
+
+    reverse_transformer_layers_per_block (Tuple[Tuple] | 기본값: (None))
+        업샘플링 블록의 BasicTransformerBlock 수.
+
+    encoder_hid_dim (int | 기본값: (None))
+        encoder_hidden_states가 cross_attention_dim으로 프로젝션될 때 사용할 차원.
+
+    encoder_hid_dim_type (str | 기본값: (None))
+        encoder_hidden_states가 cross_attention_dim으로 다운 프로젝션되는 방법.
+
+    attention_head_dim (int | 기본값: (8))
+        어텐션 헤드의 차원.
+
+    num_attention_heads (int | 기본값: (None))
+        어텐션 헤드 수. 정의되지 않으면 attention_head_dim이 기본값으로 사용.
+
+    resnet_time_scale_shift (str | 기본값: ("default"))
+        ResNet 블록의 타임 스케일 시프트 설정.
+
+    class_embed_type (str | 기본값: (None))
+        클래스 임베딩의 유형.
+
+    addition_embed_type (str | 기본값: (None))
+        타임 임베딩에 추가될 임베딩 유형.
+
+    addition_time_embed_dim (int | 기본값: (None))
+        타임스텝 임베딩의 차원.
+
+    num_class_embeds (int | 기본값: (None))
+        클래스 레이블 조건화 시 학습 가능한 임베딩 행렬의 입력 차원.
+
+    time_embedding_type (str | 기본값: ("positional"))
+        타임스텝에 사용할 포지션 임베딩의 유형.
+
+    time_embedding_dim (int | 기본값: (None))
+        프로젝션된 타임 임베딩의 차원을 재정의하는 옵션.
+
+    time_embedding_act_fn (str | 기본값: (None))
+        타임 임베딩에 한 번만 사용할 선택적 활성화 함수.
+
+    timestep_post_act (str | 기본값: (None))
+        타임스텝 임베딩에서 두 번째로 사용할 활성화 함수.
+
+    time_cond_proj_dim (int | 기본값: (None))
+        타임스텝 임베딩의 cond_proj 레이어의 차원.
+
+    conv_in_kernel (int | 기본값: (3))
+        conv_in 레이어의 커널 크기.
+
+    conv_out_kernel (int | 기본값: (3))
+        conv_out 레이어의 커널 크기.
+
+    projection_class_embeddings_input_dim (int | 기본값: (None))
+        class_embed_type="projection"일 때 class_labels 입력의 차원.
+
+    class_embeddings_concat (bool | 기본값: (False))
+        타임 임베딩과 클래스 임베딩을 연결할지 여부.
+
+    mid_block_only_cross_attention (bool | 기본값: (None))
+        UNetMidBlock2DSimpleCrossAttn을 사용할 때 중간 블록에서 크로스 어텐션을 사용할지 여부.
     """
 
     _supports_gradient_checkpointing = True
@@ -233,7 +264,7 @@ class UNet2DConditionModel(ModelMixin, ConfigMixin, UNet2DConditionLoadersMixin)
         super().__init__()
 
         self.sample_size = sample_size
-
+        # 따로 설정해서는 못쓴다고 하네요
         if num_attention_heads is not None:
             raise ValueError(
                 "At the moment it is not possible to define the number of attention heads via `num_attention_heads` because of a naming issue as described in https://github.com/huggingface/diffusers/issues/2011#issuecomment-1547958131. Passing `num_attention_heads` will only be supported in diffusers v0.19."
@@ -354,7 +385,7 @@ class UNet2DConditionModel(ModelMixin, ConfigMixin, UNet2DConditionLoadersMixin)
         else:
             self.encoder_hid_proj = None
 
-        # class embedding
+        # 클래스 임베딩 - 임베딩 타입에 따른 코드들
         if class_embed_type is None and num_class_embeds is not None:
             self.class_embedding = nn.Embedding(num_class_embeds, time_embed_dim)
         elif class_embed_type == "timestep":
@@ -383,6 +414,8 @@ class UNet2DConditionModel(ModelMixin, ConfigMixin, UNet2DConditionLoadersMixin)
         else:
             self.class_embedding = None
 
+
+        #여기서부터는 Addition Embeding Type에 관한 이야기
         if addition_embed_type == "text":
             if encoder_hid_dim is not None:
                 text_time_embedding_from_dim = encoder_hid_dim
@@ -450,7 +483,7 @@ class UNet2DConditionModel(ModelMixin, ConfigMixin, UNet2DConditionLoadersMixin)
         else:
             blocks_time_embed_dim = time_embed_dim
 
-        # down
+        # Down 블럭드렝 대한 코드 -> Unet에서 축소과정
         output_channel = block_out_channels[0]
         for i, down_block_type in enumerate(down_block_types):
             input_channel = output_channel
@@ -485,7 +518,7 @@ class UNet2DConditionModel(ModelMixin, ConfigMixin, UNet2DConditionLoadersMixin)
             )
             self.down_blocks.append(down_block)
 
-        # mid
+        # 중간 (MidBlock)
         if mid_block_type == "UNetMidBlock2DCrossAttn":
             self.mid_block = UNetMidBlock2DCrossAttn(
                 transformer_layers_per_block=transformer_layers_per_block[-1],
@@ -541,7 +574,7 @@ class UNet2DConditionModel(ModelMixin, ConfigMixin, UNet2DConditionLoadersMixin)
         # count how many layers upsample the images
         self.num_upsamplers = 0
 
-        # up
+        # 바로 다시 Upconv
         reversed_block_out_channels = list(reversed(block_out_channels))
         reversed_num_attention_heads = list(reversed(num_attention_heads))
         reversed_layers_per_block = list(reversed(layers_per_block))
@@ -670,7 +703,7 @@ class UNet2DConditionModel(ModelMixin, ConfigMixin, UNet2DConditionLoadersMixin)
 
 
 
-        # out
+        # Unet에 대한 전체 Output
         if norm_num_groups is not None:
             self.conv_norm_out = nn.GroupNorm(
                 num_channels=block_out_channels[0], num_groups=norm_num_groups, eps=norm_eps
@@ -701,54 +734,54 @@ class UNet2DConditionModel(ModelMixin, ConfigMixin, UNet2DConditionLoadersMixin)
 
 
 
-
+    
     @property
     def attn_processors(self) -> Dict[str, AttentionProcessor]:
-        r"""
-        Returns:
-            `dict` of attention processors: A dictionary containing all attention processors used in the model with
-            indexed by its weight name.
         """
-        # set recursively
+        Returns:
+            `dict` of attention processors: 모델에서 사용된 모든 attention 프로세서를 반환하며, weight 이름으로 인덱싱되어 있음.
+        """
+        # 재귀적으로 설정
         processors = {}
 
+        # 프로세서를 재귀적으로 추가하는 함수
         def fn_recursive_add_processors(name: str, module: torch.nn.Module, processors: Dict[str, AttentionProcessor]):
             if hasattr(module, "get_processor"):
                 processors[f"{name}.processor"] = module.get_processor(return_deprecated_lora=True)
 
+            # 서브 모듈을 순회하며 프로세서 추가
             for sub_name, child in module.named_children():
                 fn_recursive_add_processors(f"{name}.{sub_name}", child, processors)
 
             return processors
 
+        # 최상위 모듈들을 순회하며 프로세서 설정
         for name, module in self.named_children():
             fn_recursive_add_processors(name, module, processors)
 
         return processors
 
+    # attention processor 설정 함수
     def set_attn_processor(
         self, processor: Union[AttentionProcessor, Dict[str, AttentionProcessor]], _remove_lora=False
     ):
-        r"""
+        """
         Sets the attention processor to use to compute attention.
 
         Parameters:
             processor (`dict` of `AttentionProcessor` or only `AttentionProcessor`):
-                The instantiated processor class or a dictionary of processor classes that will be set as the processor
-                for **all** `Attention` layers.
-
-                If `processor` is a dict, the key needs to define the path to the corresponding cross attention
-                processor. This is strongly recommended when setting trainable attention processors.
-
+                각 attention 레이어에 대해 사용될 processor 클래스 설정. 딕셔너리를 사용하는 경우, 경로에 맞춰 cross attention 프로세서를 지정해야 함.
         """
         count = len(self.attn_processors.keys())
 
+        # 프로세서의 수가 맞지 않는 경우 오류 발생
         if isinstance(processor, dict) and len(processor) != count:
             raise ValueError(
                 f"A dict of processors was passed, but the number of processors {len(processor)} does not match the"
                 f" number of attention layers: {count}. Please make sure to pass {count} processor classes."
             )
 
+        # 재귀적으로 attention processor를 설정하는 함수
         def fn_recursive_attn_processor(name: str, module: torch.nn.Module, processor):
             if hasattr(module, "set_processor"):
                 if not isinstance(processor, dict):
@@ -756,15 +789,19 @@ class UNet2DConditionModel(ModelMixin, ConfigMixin, UNet2DConditionLoadersMixin)
                 else:
                     module.set_processor(processor.pop(f"{name}.processor"), _remove_lora=_remove_lora)
 
+            # 서브 모듈 순회
             for sub_name, child in module.named_children():
                 fn_recursive_attn_processor(f"{name}.{sub_name}", child, processor)
 
+        # 최상위 모듈들을 순회하며 프로세서 설정
         for name, module in self.named_children():
             fn_recursive_attn_processor(name, module, processor)
 
+    # 기본 attention processor 설정 함수
     def set_default_attn_processor(self):
         """
         Disables custom attention processors and sets the default attention implementation.
+        기본 attention 프로세서로 설정.
         """
         if all(proc.__class__ in ADDED_KV_ATTENTION_PROCESSORS for proc in self.attn_processors.values()):
             processor = AttnAddedKVProcessor()
@@ -777,22 +814,19 @@ class UNet2DConditionModel(ModelMixin, ConfigMixin, UNet2DConditionLoadersMixin)
 
         self.set_attn_processor(processor, _remove_lora=True)
 
+    # sliced attention 설정 함수
     def set_attention_slice(self, slice_size):
-        r"""
+        """
         Enable sliced attention computation.
 
-        When this option is enabled, the attention module splits the input tensor in slices to compute attention in
-        several steps. This is useful for saving some memory in exchange for a small decrease in speed.
-
+        입력 텐서를 슬라이스하여 메모리를 절약하며 주의 계산을 수행할 수 있도록 함.
         Args:
-            slice_size (`str` or `int` or `list(int)`, *optional*, defaults to `"auto"`):
-                When `"auto"`, input to the attention heads is halved, so attention is computed in two steps. If
-                `"max"`, maximum amount of memory is saved by running only one slice at a time. If a number is
-                provided, uses as many slices as `attention_head_dim // slice_size`. In this case, `attention_head_dim`
-                must be a multiple of `slice_size`.
+            slice_size (`str` or `int` or `list(int)`, *optional*, defaults to "auto"):
+                슬라이스 크기 설정에 따라 메모리 사용량을 조정할 수 있음.
         """
         sliceable_head_dims = []
 
+        # 슬라이스 가능한 차원을 재귀적으로 수집하는 함수
         def fn_recursive_retrieve_sliceable_dims(module: torch.nn.Module):
             if hasattr(module, "set_attention_slice"):
                 sliceable_head_dims.append(module.sliceable_head_dim)
@@ -800,18 +834,16 @@ class UNet2DConditionModel(ModelMixin, ConfigMixin, UNet2DConditionLoadersMixin)
             for child in module.children():
                 fn_recursive_retrieve_sliceable_dims(child)
 
-        # retrieve number of attention layers
+        # attention 레이어 수집
         for module in self.children():
             fn_recursive_retrieve_sliceable_dims(module)
 
         num_sliceable_layers = len(sliceable_head_dims)
 
+        # 슬라이스 크기 설정
         if slice_size == "auto":
-            # half the attention head size is usually a good trade-off between
-            # speed and memory
             slice_size = [dim // 2 for dim in sliceable_head_dims]
         elif slice_size == "max":
-            # make smallest slice possible
             slice_size = num_sliceable_layers * [1]
 
         slice_size = num_sliceable_layers * [slice_size] if not isinstance(slice_size, list) else slice_size
@@ -828,9 +860,7 @@ class UNet2DConditionModel(ModelMixin, ConfigMixin, UNet2DConditionLoadersMixin)
             if size is not None and size > dim:
                 raise ValueError(f"size {size} has to be smaller or equal to {dim}.")
 
-        # Recursively walk through all the children.
-        # Any children which exposes the set_attention_slice method
-        # gets the message
+        # 슬라이스 설정을 재귀적으로 설정하는 함수
         def fn_recursive_set_attention_slice(module: torch.nn.Module, slice_size: List[int]):
             if hasattr(module, "set_attention_slice"):
                 module.set_attention_slice(slice_size.pop())
@@ -842,27 +872,19 @@ class UNet2DConditionModel(ModelMixin, ConfigMixin, UNet2DConditionLoadersMixin)
         for module in self.children():
             fn_recursive_set_attention_slice(module, reversed_slice_size)
 
+    # gradient checkpointing 설정 함수
     def _set_gradient_checkpointing(self, module, value=False):
         if hasattr(module, "gradient_checkpointing"):
             module.gradient_checkpointing = value
 
+    # FreeU 메커니즘 활성화
     def enable_freeu(self, s1, s2, b1, b2):
-        r"""Enables the FreeU mechanism from https://arxiv.org/abs/2309.11497.
-
-        The suffixes after the scaling factors represent the stage blocks where they are being applied.
-
-        Please refer to the [official repository](https://github.com/ChenyangSi/FreeU) for combinations of values that
-        are known to work well for different pipelines such as Stable Diffusion v1, v2, and Stable Diffusion XL.
-
+        """Enables the FreeU mechanism from https://arxiv.org/abs/2309.11497.
         Args:
-            s1 (`float`):
-                Scaling factor for stage 1 to attenuate the contributions of the skip features. This is done to
-                mitigate the "oversmoothing effect" in the enhanced denoising process.
-            s2 (`float`):
-                Scaling factor for stage 2 to attenuate the contributions of the skip features. This is done to
-                mitigate the "oversmoothing effect" in the enhanced denoising process.
-            b1 (`float`): Scaling factor for stage 1 to amplify the contributions of backbone features.
-            b2 (`float`): Scaling factor for stage 2 to amplify the contributions of backbone features.
+            s1 (`float`): Stage 1에서 스킵 피처의 기여도를 줄이기 위한 스케일링 팩터.
+            s2 (`float`): Stage 2에서 스킵 피처의 기여도를 줄이기 위한 스케일링 팩터.
+            b1 (`float`): Stage 1에서 백본 피처의 기여도를 증폭시키기 위한 스케일링 팩터.
+            b2 (`float`): Stage 2에서 백본 피처의 기여도를 증폭시키기 위한 스케일링 팩터.
         """
         for i, upsample_block in enumerate(self.up_blocks):
             setattr(upsample_block, "s1", s1)
@@ -870,6 +892,7 @@ class UNet2DConditionModel(ModelMixin, ConfigMixin, UNet2DConditionLoadersMixin)
             setattr(upsample_block, "b1", b1)
             setattr(upsample_block, "b2", b2)
 
+    # FreeU 메커니즘 비활성화
     def disable_freeu(self):
         """Disables the FreeU mechanism."""
         freeu_keys = {"s1", "s2", "b1", "b2"}
@@ -878,42 +901,41 @@ class UNet2DConditionModel(ModelMixin, ConfigMixin, UNet2DConditionLoadersMixin)
                 if hasattr(upsample_block, k) or getattr(upsample_block, k, None) is not None:
                     setattr(upsample_block, k, None)
 
+    # QKV 프로젝션 합성 활성화
     def fuse_qkv_projections(self):
         """
-        Enables fused QKV projections. For self-attention modules, all projection matrices (i.e., query,
-        key, value) are fused. For cross-attention modules, key and value projection matrices are fused.
+        Enables fused QKV projections.
 
+        셀프 어텐션 모듈에 대해 쿼리, 키, 밸류 프로젝션 행렬이 합쳐짐.
         <Tip warning={true}>
-
-        This API is 🧪 experimental.
-
+        이 API는 🧪 실험적임.
         </Tip>
         """
         self.original_attn_processors = None
 
+        # KV 프로젝션이 추가된 경우 지원되지 않음
         for _, attn_processor in self.attn_processors.items():
             if "Added" in str(attn_processor.__class__.__name__):
                 raise ValueError("`fuse_qkv_projections()` is not supported for models having added KV projections.")
 
         self.original_attn_processors = self.attn_processors
 
+        # 모듈 순회하여 프로젝션 합성
         for module in self.modules():
             if isinstance(module, Attention):
                 module.fuse_projections(fuse=True)
 
+    # QKV 프로젝션 합성 비활성화
     def unfuse_qkv_projections(self):
         """Disables the fused QKV projection if enabled.
-
         <Tip warning={true}>
-
-        This API is 🧪 experimental.
-
+        이 API는 🧪 실험적임.
         </Tip>
-
         """
         if self.original_attn_processors is not None:
             self.set_attn_processor(self.original_attn_processors)
 
+    # forward 함수
     def forward(
         self,
         sample: torch.FloatTensor,
@@ -930,106 +952,66 @@ class UNet2DConditionModel(ModelMixin, ConfigMixin, UNet2DConditionLoadersMixin)
         encoder_attention_mask: Optional[torch.Tensor] = None,
         return_dict: bool = True,
     ) -> Union[UNet2DConditionOutput, Tuple]:
-        r"""
-        The [`UNet2DConditionModel`] forward method.
+        """
+        [`UNet2DConditionModel`]의 forward 메서드.
 
         Args:
             sample (`torch.FloatTensor`):
-                The noisy input tensor with the following shape `(batch, channel, height, width)`.
-            timestep (`torch.FloatTensor` or `float` or `int`): The number of timesteps to denoise an input.
+                노이즈가 있는 입력 텐서. (배치, 채널, 높이, 너비) 형태.
+            timestep (`torch.FloatTensor` or `float` or `int`): 입력을 디노이즈할 타임스텝.
             encoder_hidden_states (`torch.FloatTensor`):
-                The encoder hidden states with shape `(batch, sequence_length, feature_dim)`.
-            class_labels (`torch.Tensor`, *optional*, defaults to `None`):
-                Optional class labels for conditioning. Their embeddings will be summed with the timestep embeddings.
-            timestep_cond: (`torch.Tensor`, *optional*, defaults to `None`):
-                Conditional embeddings for timestep. If provided, the embeddings will be summed with the samples passed
-                through the `self.time_embedding` layer to obtain the timestep embeddings.
-            attention_mask (`torch.Tensor`, *optional*, defaults to `None`):
-                An attention mask of shape `(batch, key_tokens)` is applied to `encoder_hidden_states`. If `1` the mask
-                is kept, otherwise if `0` it is discarded. Mask will be converted into a bias, which adds large
-                negative values to the attention scores corresponding to "discard" tokens.
+                인코더 히든 상태 (배치, 시퀀스 길이, 피처 차원).
+            class_labels (`torch.Tensor`, *optional*):
+                클래스 라벨 임베딩. 타임스텝 임베딩과 더해짐.
+            timestep_cond (`torch.Tensor`, *optional*):
+                타임스텝 조건 임베딩. 주어진 경우 time_embedding 레이어를 통과한 후 더해짐.
+            attention_mask (`torch.Tensor`, *optional*):
+                인코더 히든 상태에 적용될 주의 마스크 (배치, 키 토큰).
             cross_attention_kwargs (`dict`, *optional*):
-                A kwargs dictionary that if specified is passed along to the `AttentionProcessor` as defined under
-                `self.processor` in
-                [diffusers.models.attention_processor](https://github.com/huggingface/diffusers/blob/main/src/diffusers/models/attention_processor.py).
-            added_cond_kwargs: (`dict`, *optional*):
-                A kwargs dictionary containing additional embeddings that if specified are added to the embeddings that
-                are passed along to the UNet blocks.
-            down_block_additional_residuals: (`tuple` of `torch.Tensor`, *optional*):
-                A tuple of tensors that if specified are added to the residuals of down unet blocks.
-            mid_block_additional_residual: (`torch.Tensor`, *optional*):
-                A tensor that if specified is added to the residual of the middle unet block.
-            encoder_attention_mask (`torch.Tensor`):
-                A cross-attention mask of shape `(batch, sequence_length)` is applied to `encoder_hidden_states`. If
-                `True` the mask is kept, otherwise if `False` it is discarded. Mask will be converted into a bias,
-                which adds large negative values to the attention scores corresponding to "discard" tokens.
-            return_dict (`bool`, *optional*, defaults to `True`):
-                Whether or not to return a [`~models.unet_2d_condition.UNet2DConditionOutput`] instead of a plain
-                tuple.
-            cross_attention_kwargs (`dict`, *optional*):
-                A kwargs dictionary that if specified is passed along to the [`AttnProcessor`].
-            added_cond_kwargs: (`dict`, *optional*):
-                A kwargs dictionary containin additional embeddings that if specified are added to the embeddings that
-                are passed along to the UNet blocks.
+                `AttentionProcessor`에 전달될 추가 매개변수.
+            added_cond_kwargs (`dict`, *optional*):
+                UNet 블록에 전달될 추가 임베딩.
             down_block_additional_residuals (`tuple` of `torch.Tensor`, *optional*):
-                additional residuals to be added to UNet long skip connections from down blocks to up blocks for
-                example from ControlNet side model(s)
+                하위 UNet 블록의 잔차 연결에 추가될 텐서.
             mid_block_additional_residual (`torch.Tensor`, *optional*):
-                additional residual to be added to UNet mid block output, for example from ControlNet side model
-            down_intrablock_additional_residuals (`tuple` of `torch.Tensor`, *optional*):
-                additional residuals to be added within UNet down blocks, for example from T2I-Adapter side model(s)
+                중간 UNet 블록의 잔차에 추가될 텐서.
+            encoder_attention_mask (`torch.Tensor`):
+                인코더 히든 상태에 적용될 주의 마스크.
+            return_dict (`bool`, *optional*, defaults to `True`):
+                결과를 딕셔너리 형태로 반환할지 여부 설정.
 
         Returns:
-            [`~models.unet_2d_condition.UNet2DConditionOutput`] or `tuple`:
-                If `return_dict` is True, an [`~models.unet_2d_condition.UNet2DConditionOutput`] is returned, otherwise
-                a `tuple` is returned where the first element is the sample tensor.
+            [`~models.unet_2d_condition.UNet2DConditionOutput`] 또는 `tuple`: 결과 텐서 반환.
         """
-        # By default samples have to be AT least a multiple of the overall upsampling factor.
-        # The overall upsampling factor is equal to 2 ** (# num of upsampling layers).
-        # However, the upsampling interpolation output size can be forced to fit any upsampling size
-        # on the fly if necessary.
+        # 샘플은 기본적으로 업샘플링 레이어의 전체 배수여야 함
         default_overall_up_factor = 2**self.num_upsamplers
 
-        # upsample size should be forwarded when sample is not a multiple of `default_overall_up_factor`
+        # 업샘플 크기를 포워드해야 하는지 확인
         forward_upsample_size = False
         upsample_size = None
 
         for dim in sample.shape[-2:]:
             if dim % default_overall_up_factor != 0:
-                # Forward upsample size to force interpolation output size.
                 forward_upsample_size = True
                 break
 
-        # ensure attention_mask is a bias, and give it a singleton query_tokens dimension
-        # expects mask of shape:
-        #   [batch, key_tokens]
-        # adds singleton query_tokens dimension:
-        #   [batch,                    1, key_tokens]
-        # this helps to broadcast it as a bias over attention scores, which will be in one of the following shapes:
-        #   [batch,  heads, query_tokens, key_tokens] (e.g. torch sdp attn)
-        #   [batch * heads, query_tokens, key_tokens] (e.g. xformers or classic attn)
+        # attention_mask를 편향으로 변환하여 attention 점수에 추가 가능하도록 변경
         if attention_mask is not None:
-            # assume that mask is expressed as:
-            #   (1 = keep,      0 = discard)
-            # convert mask into a bias that can be added to attention scores:
-            #       (keep = +0,     discard = -10000.0)
             attention_mask = (1 - attention_mask.to(sample.dtype)) * -10000.0
             attention_mask = attention_mask.unsqueeze(1)
 
-        # convert encoder_attention_mask to a bias the same way we do for attention_mask
+        # encoder_attention_mask를 편향으로 변환하여 사용
         if encoder_attention_mask is not None:
             encoder_attention_mask = (1 - encoder_attention_mask.to(sample.dtype)) * -10000.0
             encoder_attention_mask = encoder_attention_mask.unsqueeze(1)
 
-        # 0. center input if necessary
+        # 입력 중심화
         if self.config.center_input_sample:
             sample = 2 * sample - 1.0
 
-        # 1. time
+        # 시간 관련 임베딩 계산
         timesteps = timestep
         if not torch.is_tensor(timesteps):
-            # TODO: this requires sync between CPU and GPU. So try to pass timesteps as tensors if you can
-            # This would be a good case for the `match` statement (Python 3.10+)
             is_mps = sample.device.type == "mps"
             if isinstance(timestep, float):
                 dtype = torch.float32 if is_mps else torch.float64
@@ -1039,28 +1021,21 @@ class UNet2DConditionModel(ModelMixin, ConfigMixin, UNet2DConditionLoadersMixin)
         elif len(timesteps.shape) == 0:
             timesteps = timesteps[None].to(sample.device)
 
-        # broadcast to batch dimension in a way that's compatible with ONNX/Core ML
         timesteps = timesteps.expand(sample.shape[0])
 
         t_emb = self.time_proj(timesteps)
-
-        # `Timesteps` does not contain any weights and will always return f32 tensors
-        # but time_embedding might actually be running in fp16. so we need to cast here.
-        # there might be better ways to encapsulate this.
         t_emb = t_emb.to(dtype=sample.dtype)
-
         emb = self.time_embedding(t_emb, timestep_cond)
         aug_emb = None
 
+        # 여기서부터는 Addition Embeding Type에 관한 이야기
+        # 클래스 임베딩 - 임베딩 타입에 따른 코드들
         if self.class_embedding is not None:
             if class_labels is None:
                 raise ValueError("class_labels should be provided when num_class_embeds > 0")
 
             if self.config.class_embed_type == "timestep":
                 class_labels = self.time_proj(class_labels)
-
-                # `Timesteps` does not contain any weights and will always return f32 tensors
-                # there might be better ways to encapsulate this.
                 class_labels = class_labels.to(dtype=sample.dtype)
 
             class_emb = self.class_embedding(class_labels).to(dtype=sample.dtype)
@@ -1070,29 +1045,21 @@ class UNet2DConditionModel(ModelMixin, ConfigMixin, UNet2DConditionLoadersMixin)
             else:
                 emb = emb + class_emb
 
+        # 추가된 텍스트 임베딩 처리 - 추가 임베딩 타입에 따른 코드들
         if self.config.addition_embed_type == "text":
             aug_emb = self.add_embedding(encoder_hidden_states)
         elif self.config.addition_embed_type == "text_image":
-            # Kandinsky 2.1 - style
             if "image_embeds" not in added_cond_kwargs:
-                raise ValueError(
-                    f"{self.__class__} has the config param `addition_embed_type` set to 'text_image' which requires the keyword argument `image_embeds` to be passed in `added_cond_kwargs`"
-                )
+                raise ValueError("text_image 타입에서는 image_embeds가 추가 조건에 필요")
 
             image_embs = added_cond_kwargs.get("image_embeds")
             text_embs = added_cond_kwargs.get("text_embeds", encoder_hidden_states)
             aug_emb = self.add_embedding(text_embs, image_embs)
         elif self.config.addition_embed_type == "text_time":
-            # SDXL - style
-            if "text_embeds" not in added_cond_kwargs:
-                raise ValueError(
-                    f"{self.__class__} has the config param `addition_embed_type` set to 'text_time' which requires the keyword argument `text_embeds` to be passed in `added_cond_kwargs`"
-                )
+            if "text_embeds" not in added_cond_kwargs or "time_ids" not in added_cond_kwargs:
+                raise ValueError("text_time 타입에서는 text_embeds와 time_ids가 필요")
+
             text_embeds = added_cond_kwargs.get("text_embeds")
-            if "time_ids" not in added_cond_kwargs:
-                raise ValueError(
-                    f"{self.__class__} has the config param `addition_embed_type` set to 'text_time' which requires the keyword argument `time_ids` to be passed in `added_cond_kwargs`"
-                )
             time_ids = added_cond_kwargs.get("time_ids")
             time_embeds = self.add_time_proj(time_ids.flatten())
             time_embeds = time_embeds.reshape((text_embeds.shape[0], -1))
@@ -1100,19 +1067,14 @@ class UNet2DConditionModel(ModelMixin, ConfigMixin, UNet2DConditionLoadersMixin)
             add_embeds = add_embeds.to(emb.dtype)
             aug_emb = self.add_embedding(add_embeds)
         elif self.config.addition_embed_type == "image":
-            # Kandinsky 2.2 - style
             if "image_embeds" not in added_cond_kwargs:
-                raise ValueError(
-                    f"{self.__class__} has the config param `addition_embed_type` set to 'image' which requires the keyword argument `image_embeds` to be passed in `added_cond_kwargs`"
-                )
+                raise ValueError("image 타입에서는 image_embeds가 필요")
             image_embs = added_cond_kwargs.get("image_embeds")
             aug_emb = self.add_embedding(image_embs)
         elif self.config.addition_embed_type == "image_hint":
-            # Kandinsky 2.2 - style
             if "image_embeds" not in added_cond_kwargs or "hint" not in added_cond_kwargs:
-                raise ValueError(
-                    f"{self.__class__} has the config param `addition_embed_type` set to 'image_hint' which requires the keyword arguments `image_embeds` and `hint` to be passed in `added_cond_kwargs`"
-                )
+                raise ValueError("image_hint 타입에서는 image_embeds와 hint가 필요")
+
             image_embs = added_cond_kwargs.get("image_embeds")
             hint = added_cond_kwargs.get("hint")
             aug_emb, hint = self.add_embedding(image_embs, hint)
@@ -1123,78 +1085,47 @@ class UNet2DConditionModel(ModelMixin, ConfigMixin, UNet2DConditionLoadersMixin)
         if self.time_embed_act is not None:
             emb = self.time_embed_act(emb)
 
-        if self.encoder_hid_proj is not None and self.config.encoder_hid_dim_type == "text_proj":
-            encoder_hidden_states = self.encoder_hid_proj(encoder_hidden_states)
-        elif self.encoder_hid_proj is not None and self.config.encoder_hid_dim_type == "text_image_proj":
-            # Kadinsky 2.1 - style
-            if "image_embeds" not in added_cond_kwargs:
-                raise ValueError(
-                    f"{self.__class__} has the config param `encoder_hid_dim_type` set to 'text_image_proj' which requires the keyword argument `image_embeds` to be passed in  `added_conditions`"
-                )
+        # 인코더 히든 상태 프로젝션 - 설정에 따른 코드들
+        if self.encoder_hid_proj is not None:
+            if self.config.encoder_hid_dim_type == "text_proj":
+                encoder_hidden_states = self.encoder_hid_proj(encoder_hidden_states)
+            elif self.config.encoder_hid_dim_type == "text_image_proj":
+                if "image_embeds" not in added_cond_kwargs:
+                    raise ValueError("text_image_proj 타입에서는 image_embeds가 필요")
+                image_embeds = added_cond_kwargs.get("image_embeds")
+                encoder_hidden_states = self.encoder_hid_proj(encoder_hidden_states, image_embeds)
+            elif self.config.encoder_hid_dim_type == "image_proj":
+                if "image_embeds" not in added_cond_kwargs:
+                    raise ValueError("image_proj 타입에서는 image_embeds가 필요")
+                image_embeds = added_cond_kwargs.get("image_embeds")
+                encoder_hidden_states = self.encoder_hid_proj(image_embeds)
+            elif self.config.encoder_hid_dim_type == "ip_image_proj":
+                if "image_embeds" not in added_cond_kwargs:
+                    raise ValueError("ip_image_proj 타입에서는 image_embeds가 필요")
+                image_embeds = added_cond_kwargs.get("image_embeds")
+                image_embeds = self.encoder_hid_proj(image_embeds).to(encoder_hidden_states.dtype)
+                encoder_hidden_states = torch.cat([encoder_hidden_states, image_embeds], dim=1)
 
-            image_embeds = added_cond_kwargs.get("image_embeds")
-            encoder_hidden_states = self.encoder_hid_proj(encoder_hidden_states, image_embeds)
-        elif self.encoder_hid_proj is not None and self.config.encoder_hid_dim_type == "image_proj":
-            # Kandinsky 2.2 - style
-            if "image_embeds" not in added_cond_kwargs:
-                raise ValueError(
-                    f"{self.__class__} has the config param `encoder_hid_dim_type` set to 'image_proj' which requires the keyword argument `image_embeds` to be passed in  `added_conditions`"
-                )
-            image_embeds = added_cond_kwargs.get("image_embeds")
-            encoder_hidden_states = self.encoder_hid_proj(image_embeds)
-        elif self.encoder_hid_proj is not None and self.config.encoder_hid_dim_type == "ip_image_proj":
-            if "image_embeds" not in added_cond_kwargs:
-                raise ValueError(
-                    f"{self.__class__} has the config param `encoder_hid_dim_type` set to 'ip_image_proj' which requires the keyword argument `image_embeds` to be passed in  `added_conditions`"
-                )
-            image_embeds = added_cond_kwargs.get("image_embeds")
-            image_embeds = self.encoder_hid_proj(image_embeds).to(encoder_hidden_states.dtype)
-            encoder_hidden_states = torch.cat([encoder_hidden_states, image_embeds], dim=1)
-
-        # 2. pre-process
+        # 샘플 사전 처리
         sample = self.conv_in(sample)
-        garment_features=[]
+        garment_features = []
 
-        # 2.5 GLIGEN position net
+        # GLIGEN 위치 네트워크 관련 설정
         if cross_attention_kwargs is not None and cross_attention_kwargs.get("gligen", None) is not None:
             cross_attention_kwargs = cross_attention_kwargs.copy()
             gligen_args = cross_attention_kwargs.pop("gligen")
             cross_attention_kwargs["gligen"] = {"objs": self.position_net(**gligen_args)}
 
-
-        # 3. down
+        # down 블록
         lora_scale = cross_attention_kwargs.get("scale", 1.0) if cross_attention_kwargs is not None else 1.0
-        if USE_PEFT_BACKEND:
-            # weight the lora layers by setting `lora_scale` for each PEFT layer
-            scale_lora_layers(self, lora_scale)
-
-        is_controlnet = mid_block_additional_residual is not None and down_block_additional_residuals is not None
-        # using new arg down_intrablock_additional_residuals for T2I-Adapters, to distinguish from controlnets
-        is_adapter = down_intrablock_additional_residuals is not None
-        # maintain backward compatibility for legacy usage, where
-        #       T2I-Adapter and ControlNet both use down_block_additional_residuals arg
-        #       but can only use one or the other
-        if not is_adapter and mid_block_additional_residual is None and down_block_additional_residuals is not None:
-            deprecate(
-                "T2I should not use down_block_additional_residuals",
-                "1.3.0",
-                "Passing intrablock residual connections with `down_block_additional_residuals` is deprecated \
-                       and will be removed in diffusers 1.3.0.  `down_block_additional_residuals` should only be used \
-                       for ControlNet. Please make sure use `down_intrablock_additional_residuals` instead. ",
-                standard_warn=False,
-            )
-            down_intrablock_additional_residuals = down_block_additional_residuals
-            is_adapter = True
-
         down_block_res_samples = (sample,)
         for downsample_block in self.down_blocks:
             if hasattr(downsample_block, "has_cross_attention") and downsample_block.has_cross_attention:
-                # For t2i-adapter CrossAttnDownBlock2D
                 additional_residuals = {}
-                if is_adapter and len(down_intrablock_additional_residuals) > 0:
+                if len(down_intrablock_additional_residuals) > 0:
                     additional_residuals["additional_residuals"] = down_intrablock_additional_residuals.pop(0)
 
-                sample, res_samples,out_garment_feat = downsample_block(
+                sample, res_samples, out_garment_feat = downsample_block(
                     hidden_states=sample,
                     temb=emb,
                     encoder_hidden_states=encoder_hidden_states,
@@ -1206,27 +1137,25 @@ class UNet2DConditionModel(ModelMixin, ConfigMixin, UNet2DConditionLoadersMixin)
                 garment_features += out_garment_feat
             else:
                 sample, res_samples = downsample_block(hidden_states=sample, temb=emb, scale=lora_scale)
-                if is_adapter and len(down_intrablock_additional_residuals) > 0:
+                if len(down_intrablock_additional_residuals) > 0:
                     sample += down_intrablock_additional_residuals.pop(0)
 
             down_block_res_samples += res_samples
-        
 
-        if is_controlnet:
+        # 컨트롤넷 관련 처리
+        if down_block_additional_residuals is not None:
             new_down_block_res_samples = ()
-
             for down_block_res_sample, down_block_additional_residual in zip(
                 down_block_res_samples, down_block_additional_residuals
             ):
                 down_block_res_sample = down_block_res_sample + down_block_additional_residual
                 new_down_block_res_samples = new_down_block_res_samples + (down_block_res_sample,)
-
             down_block_res_samples = new_down_block_res_samples
 
-        # 4. mid
+        # mid 블록 처리
         if self.mid_block is not None:
             if hasattr(self.mid_block, "has_cross_attention") and self.mid_block.has_cross_attention:
-                sample,out_garment_feat = self.mid_block(
+                sample, out_garment_feat = self.mid_block(
                     sample,
                     emb,
                     encoder_hidden_states=encoder_hidden_states,
@@ -1235,37 +1164,26 @@ class UNet2DConditionModel(ModelMixin, ConfigMixin, UNet2DConditionLoadersMixin)
                     encoder_attention_mask=encoder_attention_mask,
                 )
                 garment_features += out_garment_feat
-
             else:
                 sample = self.mid_block(sample, emb)
 
-            # To support T2I-Adapter-XL
-            if (
-                is_adapter
-                and len(down_intrablock_additional_residuals) > 0
-                and sample.shape == down_intrablock_additional_residuals[0].shape
-            ):
+            if len(down_intrablock_additional_residuals) > 0 and sample.shape == down_intrablock_additional_residuals[0].shape:
                 sample += down_intrablock_additional_residuals.pop(0)
 
-        if is_controlnet:
+        if mid_block_additional_residual is not None:
             sample = sample + mid_block_additional_residual
 
-
-
-        # 5. up
+        # up 블록 처리
         for i, upsample_block in enumerate(self.up_blocks):
             is_final_block = i == len(self.up_blocks) - 1
+            res_samples = down_block_res_samples[-len(upsample_block.resnets):]
+            down_block_res_samples = down_block_res_samples[:-len(upsample_block.resnets)]
 
-            res_samples = down_block_res_samples[-len(upsample_block.resnets) :]
-            down_block_res_samples = down_block_res_samples[: -len(upsample_block.resnets)]
-
-            # if we have not reached the final block and need to forward the
-            # upsample size, we do it here
             if not is_final_block and forward_upsample_size:
                 upsample_size = down_block_res_samples[-1].shape[2:]
 
             if hasattr(upsample_block, "has_cross_attention") and upsample_block.has_cross_attention:
-                sample,out_garment_feat = upsample_block(
+                sample, out_garment_feat = upsample_block(
                     hidden_states=sample,
                     temb=emb,
                     res_hidden_states_tuple=res_samples,
@@ -1277,8 +1195,7 @@ class UNet2DConditionModel(ModelMixin, ConfigMixin, UNet2DConditionLoadersMixin)
                 )
                 garment_features += out_garment_feat
 
-
         if not return_dict:
-            return (sample,),garment_features
+            return (sample,), garment_features
 
-        return UNet2DConditionOutput(sample=sample),garment_features
+        return UNet2DConditionOutput(sample=sample), garment_features

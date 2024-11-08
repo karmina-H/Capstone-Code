@@ -30,6 +30,28 @@ from einops import rearrange
 
 logger = logging.get_logger(__name__)  # pylint: disable=invalid-name
 
+from typing import Any, Dict, Optional, Tuple, Union
+
+import numpy as np
+import torch
+import torch.nn.functional as F
+from torch import nn
+
+from diffusers.utils import is_torch_version, logging
+from diffusers.utils.torch_utils import apply_freeu
+from diffusers.models.activations import get_activation
+from diffusers.models.attention_processor import Attention, AttnAddedKVProcessor, AttnAddedKVProcessor2_0
+from diffusers.models.dual_transformer_2d import DualTransformer2DModel
+from diffusers.models.normalization import AdaGroupNorm
+from diffusers.models.resnet import Downsample2D, FirDownsample2D, FirUpsample2D, KDownsample2D, KUpsample2D, ResnetBlock2D, Upsample2D
+from src.transformerhacked_garmnet import Transformer2DModel
+from einops import rearrange
+
+logger = logging.get_logger(__name__)  # pylint: disable=invalid-name
+
+# Down 블록 생성 함수
+# 입력된 down_block_type에 따라 적절한 Down 블록을 반환하는 함수
+# CrossAttention, Resnet, Skip 등의 다양한 블록 타입을 지원
 
 def get_down_block(
     down_block_type: str,
@@ -58,7 +80,7 @@ def get_down_block(
     downsample_type: Optional[str] = None,
     dropout: float = 0.0,
 ):
-    # If attn head dim is not defined, we default it to the number of heads
+    # attention head 차원이 정의되지 않은 경우 기본값 설정
     if attention_head_dim is None:
         logger.warn(
             f"It is recommended to provide `attention_head_dim` when calling `get_down_block`. Defaulting `attention_head_dim` to {num_attention_heads}."
@@ -67,6 +89,7 @@ def get_down_block(
 
     down_block_type = down_block_type[7:] if down_block_type.startswith("UNetRes") else down_block_type
     if down_block_type == "DownBlock2D":
+        # 기본 DownBlock2D 반환
         return DownBlock2D(
             num_layers=num_layers,
             in_channels=in_channels,
@@ -81,6 +104,7 @@ def get_down_block(
             resnet_time_scale_shift=resnet_time_scale_shift,
         )
     elif down_block_type == "ResnetDownsampleBlock2D":
+        # Resnet 다운샘플 블록 반환
         return ResnetDownsampleBlock2D(
             num_layers=num_layers,
             in_channels=in_channels,
@@ -96,10 +120,11 @@ def get_down_block(
             output_scale_factor=resnet_out_scale_factor,
         )
     elif down_block_type == "AttnDownBlock2D":
+        # Attention 다운 블록 반환
         if add_downsample is False:
             downsample_type = None
         else:
-            downsample_type = downsample_type or "conv"  # default to 'conv'
+            downsample_type = downsample_type or "conv"  # 기본값은 'conv'
         return AttnDownBlock2D(
             num_layers=num_layers,
             in_channels=in_channels,
@@ -115,6 +140,7 @@ def get_down_block(
             downsample_type=downsample_type,
         )
     elif down_block_type == "CrossAttnDownBlock2D":
+        # Cross Attention 다운 블록 반환
         if cross_attention_dim is None:
             raise ValueError("cross_attention_dim must be specified for CrossAttnDownBlock2D")
         return CrossAttnDownBlock2D(
@@ -139,6 +165,7 @@ def get_down_block(
             attention_type=attention_type,
         )
     elif down_block_type == "SimpleCrossAttnDownBlock2D":
+        # Simple Cross Attention 다운 블록 반환
         if cross_attention_dim is None:
             raise ValueError("cross_attention_dim must be specified for SimpleCrossAttnDownBlock2D")
         return SimpleCrossAttnDownBlock2D(
@@ -160,6 +187,7 @@ def get_down_block(
             cross_attention_norm=cross_attention_norm,
         )
     elif down_block_type == "SkipDownBlock2D":
+        # Skip Down 블록 반환
         return SkipDownBlock2D(
             num_layers=num_layers,
             in_channels=in_channels,
@@ -173,6 +201,7 @@ def get_down_block(
             resnet_time_scale_shift=resnet_time_scale_shift,
         )
     elif down_block_type == "AttnSkipDownBlock2D":
+        # Attention Skip Down 블록 반환
         return AttnSkipDownBlock2D(
             num_layers=num_layers,
             in_channels=in_channels,
@@ -186,6 +215,7 @@ def get_down_block(
             resnet_time_scale_shift=resnet_time_scale_shift,
         )
     elif down_block_type == "DownEncoderBlock2D":
+        # 다운 인코더 블록 반환
         return DownEncoderBlock2D(
             num_layers=num_layers,
             in_channels=in_channels,
@@ -199,6 +229,7 @@ def get_down_block(
             resnet_time_scale_shift=resnet_time_scale_shift,
         )
     elif down_block_type == "AttnDownEncoderBlock2D":
+        # Attention 다운 인코더 블록 반환
         return AttnDownEncoderBlock2D(
             num_layers=num_layers,
             in_channels=in_channels,
@@ -213,6 +244,7 @@ def get_down_block(
             resnet_time_scale_shift=resnet_time_scale_shift,
         )
     elif down_block_type == "KDownBlock2D":
+        # K 타입 Down 블록 반환
         return KDownBlock2D(
             num_layers=num_layers,
             in_channels=in_channels,
@@ -224,6 +256,7 @@ def get_down_block(
             resnet_act_fn=resnet_act_fn,
         )
     elif down_block_type == "KCrossAttnDownBlock2D":
+        # K 타입 Cross Attention Down 블록 반환
         return KCrossAttnDownBlock2D(
             num_layers=num_layers,
             in_channels=in_channels,
@@ -239,6 +272,9 @@ def get_down_block(
         )
     raise ValueError(f"{down_block_type} does not exist.")
 
+# Up 블록 생성 함수
+# 입력된 up_block_type에 따라 적절한 Up 블록을 반환하는 함수
+# CrossAttention, Resnet, Skip 등의 다양한 블록 타입을 지원
 
 def get_up_block(
     up_block_type: str,
@@ -268,7 +304,7 @@ def get_up_block(
     upsample_type: Optional[str] = None,
     dropout: float = 0.0,
 ) -> nn.Module:
-    # If attn head dim is not defined, we default it to the number of heads
+    # attention head 차원이 정의되지 않은 경우 기본값 설정
     if attention_head_dim is None:
         logger.warn(
             f"It is recommended to provide `attention_head_dim` when calling `get_up_block`. Defaulting `attention_head_dim` to {num_attention_heads}."
@@ -277,6 +313,7 @@ def get_up_block(
 
     up_block_type = up_block_type[7:] if up_block_type.startswith("UNetRes") else up_block_type
     if up_block_type == "UpBlock2D":
+        # 기본 UpBlock2D 반환
         return UpBlock2D(
             num_layers=num_layers,
             in_channels=in_channels,
@@ -292,6 +329,7 @@ def get_up_block(
             resnet_time_scale_shift=resnet_time_scale_shift,
         )
     elif up_block_type == "ResnetUpsampleBlock2D":
+        # Resnet 업샘플 블록 반환
         return ResnetUpsampleBlock2D(
             num_layers=num_layers,
             in_channels=in_channels,
@@ -309,6 +347,7 @@ def get_up_block(
             output_scale_factor=resnet_out_scale_factor,
         )
     elif up_block_type == "CrossAttnUpBlock2D":
+        # Cross Attention 업샘플 블록 반환
         if cross_attention_dim is None:
             raise ValueError("cross_attention_dim must be specified for CrossAttnUpBlock2D")
         return CrossAttnUpBlock2D(
@@ -334,6 +373,7 @@ def get_up_block(
             attention_type=attention_type,
         )
     elif up_block_type == "SimpleCrossAttnUpBlock2D":
+        # Simple Cross Attention 업샘플 블록 반환
         if cross_attention_dim is None:
             raise ValueError("cross_attention_dim must be specified for SimpleCrossAttnUpBlock2D")
         return SimpleCrossAttnUpBlock2D(
@@ -357,10 +397,11 @@ def get_up_block(
             cross_attention_norm=cross_attention_norm,
         )
     elif up_block_type == "AttnUpBlock2D":
+        # Attention 업샘플 블록 반환
         if add_upsample is False:
             upsample_type = None
         else:
-            upsample_type = upsample_type or "conv"  # default to 'conv'
+            upsample_type = upsample_type or "conv"  # 기본값은 'conv'
 
         return AttnUpBlock2D(
             num_layers=num_layers,
@@ -378,6 +419,7 @@ def get_up_block(
             upsample_type=upsample_type,
         )
     elif up_block_type == "SkipUpBlock2D":
+        # Skip Up 블록 반환
         return SkipUpBlock2D(
             num_layers=num_layers,
             in_channels=in_channels,
@@ -392,6 +434,7 @@ def get_up_block(
             resnet_time_scale_shift=resnet_time_scale_shift,
         )
     elif up_block_type == "AttnSkipUpBlock2D":
+        # Attention Skip Up 블록 반환
         return AttnSkipUpBlock2D(
             num_layers=num_layers,
             in_channels=in_channels,
@@ -407,6 +450,7 @@ def get_up_block(
             resnet_time_scale_shift=resnet_time_scale_shift,
         )
     elif up_block_type == "UpDecoderBlock2D":
+        # Up 인코더 블록 반환
         return UpDecoderBlock2D(
             num_layers=num_layers,
             in_channels=in_channels,
@@ -421,6 +465,7 @@ def get_up_block(
             temb_channels=temb_channels,
         )
     elif up_block_type == "AttnUpDecoderBlock2D":
+        # Attention Up 인코더 블록 반환
         return AttnUpDecoderBlock2D(
             num_layers=num_layers,
             in_channels=in_channels,
@@ -436,6 +481,7 @@ def get_up_block(
             temb_channels=temb_channels,
         )
     elif up_block_type == "KUpBlock2D":
+        # K 타입 Up 블록 반환
         return KUpBlock2D(
             num_layers=num_layers,
             in_channels=in_channels,
@@ -448,6 +494,7 @@ def get_up_block(
             resnet_act_fn=resnet_act_fn,
         )
     elif up_block_type == "KCrossAttnUpBlock2D":
+        # K 타입 Cross Attention Up 블록 반환
         return KCrossAttnUpBlock2D(
             num_layers=num_layers,
             in_channels=in_channels,
@@ -464,6 +511,9 @@ def get_up_block(
 
     raise ValueError(f"{up_block_type} does not exist.")
 
+
+# AutoencoderTinyBlock 클래스 정의
+# 기본적인 conv + ReLU 블록으로 구성된 Tiny Autoencoder 블록
 
 class AutoencoderTinyBlock(nn.Module):
     """
@@ -484,6 +534,7 @@ class AutoencoderTinyBlock(nn.Module):
     def __init__(self, in_channels: int, out_channels: int, act_fn: str):
         super().__init__()
         act_fn = get_activation(act_fn)
+        # 3개의 Conv2D 레이어와 활성화 함수를 이용한 순차적 컨볼루션 연산
         self.conv = nn.Sequential(
             nn.Conv2d(in_channels, out_channels, kernel_size=3, padding=1),
             act_fn,
@@ -491,16 +542,21 @@ class AutoencoderTinyBlock(nn.Module):
             act_fn,
             nn.Conv2d(out_channels, out_channels, kernel_size=3, padding=1),
         )
+        # 스킵 연결을 위한 레이어, 입력과 출력 채널이 다른 경우 Conv2D를 사용, 같으면 Identity 사용
         self.skip = (
             nn.Conv2d(in_channels, out_channels, kernel_size=1, bias=False)
             if in_channels != out_channels
             else nn.Identity()
         )
+        # 최종적으로 합쳐진 출력에 ReLU 적용
         self.fuse = nn.ReLU()
 
     def forward(self, x: torch.FloatTensor) -> torch.FloatTensor:
+        # conv 결과와 skip 연결 결과를 더한 후 활성화 함수(fuse) 적용
         return self.fuse(self.conv(x) + self.skip(x))
 
+# UNetMidBlock2D 클래스 정의
+# 다수의 Residual 블록과 선택적 Attention 블록을 포함하는 2D UNet 중간 블록
 
 class UNetMidBlock2D(nn.Module):
     """
@@ -556,7 +612,7 @@ class UNetMidBlock2D(nn.Module):
         if attn_groups is None:
             attn_groups = resnet_groups if resnet_time_scale_shift == "default" else None
 
-        # there is always at least one resnet
+        # 항상 최소 하나의 Resnet 블록이 존재
         resnets = [
             ResnetBlock2D(
                 in_channels=in_channels,
@@ -579,6 +635,7 @@ class UNetMidBlock2D(nn.Module):
             )
             attention_head_dim = in_channels
 
+        # num_layers 만큼의 Attention 및 Resnet 블록 생성
         for _ in range(num_layers):
             if self.add_attention:
                 attentions.append(
@@ -618,7 +675,9 @@ class UNetMidBlock2D(nn.Module):
         self.resnets = nn.ModuleList(resnets)
 
     def forward(self, hidden_states: torch.FloatTensor, temb: Optional[torch.FloatTensor] = None) -> torch.FloatTensor:
+        # 첫 번째 Resnet 블록을 통해 hidden_states 업데이트
         hidden_states = self.resnets[0](hidden_states, temb)
+        # Attention 및 이후 Resnet 블록을 순차적으로 통과
         for attn, resnet in zip(self.attentions, self.resnets[1:]):
             if attn is not None:
                 hidden_states = attn(hidden_states, temb=temb)
@@ -626,6 +685,8 @@ class UNetMidBlock2D(nn.Module):
 
         return hidden_states
 
+# UNetMidBlock2DCrossAttn 클래스 정의
+# Cross-Attention을 포함하는 2D UNet 중간 블록
 
 class UNetMidBlock2DCrossAttn(nn.Module):
     def __init__(
@@ -654,11 +715,11 @@ class UNetMidBlock2DCrossAttn(nn.Module):
         self.num_attention_heads = num_attention_heads
         resnet_groups = resnet_groups if resnet_groups is not None else min(in_channels // 4, 32)
 
-        # support for variable transformer layers per block
+        # 각 블록당 사용할 transformer 레이어 수 지정
         if isinstance(transformer_layers_per_block, int):
             transformer_layers_per_block = [transformer_layers_per_block] * num_layers
 
-        # there is always at least one resnet
+        # 항상 최소 하나의 Resnet 블록이 존재
         resnets = [
             ResnetBlock2D(
                 in_channels=in_channels,
@@ -675,6 +736,7 @@ class UNetMidBlock2DCrossAttn(nn.Module):
         ]
         attentions = []
 
+        # num_layers 만큼의 Attention 및 Resnet 블록 생성
         for i in range(num_layers):
             if not dual_cross_attention:
                 attentions.append(
@@ -730,9 +792,12 @@ class UNetMidBlock2DCrossAttn(nn.Module):
         cross_attention_kwargs: Optional[Dict[str, Any]] = None,
         encoder_attention_mask: Optional[torch.FloatTensor] = None,
     ) -> torch.FloatTensor:
+        # Cross Attention을 적용하기 위한 lora_scale 설정
         lora_scale = cross_attention_kwargs.get("scale", 1.0) if cross_attention_kwargs is not None else 1.0
+        # 첫 번째 Resnet 블록을 통해 hidden_states 업데이트
         hidden_states = self.resnets[0](hidden_states, temb, scale=lora_scale)
         garment_features = []
+        # Attention 및 이후 Resnet 블록을 순차적으로 통과
         for attn, resnet in zip(self.attentions, self.resnets[1:]):
             if self.training and self.gradient_checkpointing:
 
@@ -747,7 +812,7 @@ class UNetMidBlock2DCrossAttn(nn.Module):
 
                 ckpt_kwargs: Dict[str, Any] = {"use_reentrant": False} if is_torch_version(">=", "1.11.0") else {}
                 # hidden_states = attn(
-                hidden_states,out_garment_feat = attn(
+                hidden_states, out_garment_feat = attn(
                     hidden_states,
                     encoder_hidden_states=encoder_hidden_states,
                     cross_attention_kwargs=cross_attention_kwargs,
@@ -755,7 +820,7 @@ class UNetMidBlock2DCrossAttn(nn.Module):
                     encoder_attention_mask=encoder_attention_mask,
                     return_dict=False,
                 )
-                hidden_states=hidden_states[0]
+                hidden_states = hidden_states[0]
                 hidden_states = torch.utils.checkpoint.checkpoint(
                     create_custom_forward(resnet),
                     hidden_states,
@@ -763,8 +828,8 @@ class UNetMidBlock2DCrossAttn(nn.Module):
                     **ckpt_kwargs,
                 )
             else:
-                # hidden_states= attn(
-                hidden_states,out_garment_feat = attn(
+                # Cross Attention 블록과 이후 Resnet 블록 적용
+                hidden_states, out_garment_feat = attn(
                     hidden_states,
                     encoder_hidden_states=encoder_hidden_states,
                     cross_attention_kwargs=cross_attention_kwargs,
@@ -772,14 +837,14 @@ class UNetMidBlock2DCrossAttn(nn.Module):
                     encoder_attention_mask=encoder_attention_mask,
                     return_dict=False,
                 )
-                hidden_states=hidden_states[0]
+                hidden_states = hidden_states[0]
                 hidden_states = resnet(hidden_states, temb, scale=lora_scale)
             garment_features += out_garment_feat
-        return hidden_states,garment_features
-        # return hidden_states 
-
+        return hidden_states, garment_features
+        # return hidden_states
 
 class UNetMidBlock2DSimpleCrossAttn(nn.Module):
+    # Simple Cross-Attention을 포함한 2D UNet 중간 블록
     def __init__(
         self,
         in_channels: int,
@@ -807,7 +872,7 @@ class UNetMidBlock2DSimpleCrossAttn(nn.Module):
 
         self.num_heads = in_channels // self.attention_head_dim
 
-        # there is always at least one resnet
+        # 항상 최소 하나의 Resnet 블록이 존재
         resnets = [
             ResnetBlock2D(
                 in_channels=in_channels,
@@ -825,7 +890,9 @@ class UNetMidBlock2DSimpleCrossAttn(nn.Module):
         ]
         attentions = []
 
+        # 각 레이어마다 Attention과 Resnet 블록 추가
         for _ in range(num_layers):
+            # Attention 처리 프로세서 정의
             processor = (
                 AttnAddedKVProcessor2_0() if hasattr(F, "scaled_dot_product_attention") else AttnAddedKVProcessor()
             )
@@ -873,23 +940,20 @@ class UNetMidBlock2DSimpleCrossAttn(nn.Module):
         cross_attention_kwargs: Optional[Dict[str, Any]] = None,
         encoder_attention_mask: Optional[torch.FloatTensor] = None,
     ) -> torch.FloatTensor:
+        # Cross-Attention의 설정 값 가져오기
         cross_attention_kwargs = cross_attention_kwargs if cross_attention_kwargs is not None else {}
         lora_scale = cross_attention_kwargs.get("scale", 1.0)
 
+        # Attention Mask 설정
         if attention_mask is None:
-            # if encoder_hidden_states is defined: we are doing cross-attn, so we should use cross-attn mask.
             mask = None if encoder_hidden_states is None else encoder_attention_mask
         else:
-            # when attention_mask is defined: we don't even check for encoder_attention_mask.
-            # this is to maintain compatibility with UnCLIP, which uses 'attention_mask' param for cross-attn masks.
-            # TODO: UnCLIP should express cross-attn mask via encoder_attention_mask param instead of via attention_mask.
-            #       then we can simplify this whole if/else block to:
-            #         mask = attention_mask if encoder_hidden_states is None else encoder_attention_mask
             mask = attention_mask
 
+        # 첫 번째 Resnet 블록을 통해 hidden_states 업데이트
         hidden_states = self.resnets[0](hidden_states, temb, scale=lora_scale)
         for attn, resnet in zip(self.attentions, self.resnets[1:]):
-            # attn
+            # Attention 블록 적용
             hidden_states = attn(
                 hidden_states,
                 encoder_hidden_states=encoder_hidden_states,
@@ -897,13 +961,14 @@ class UNetMidBlock2DSimpleCrossAttn(nn.Module):
                 **cross_attention_kwargs,
             )
 
-            # resnet
+            # Resnet 블록 적용
             hidden_states = resnet(hidden_states, temb, scale=lora_scale)
 
         return hidden_states
 
 
 class AttnDownBlock2D(nn.Module):
+    # Attention이 포함된 2D 다운샘플 블록 정의
     def __init__(
         self,
         in_channels: int,
@@ -928,10 +993,11 @@ class AttnDownBlock2D(nn.Module):
 
         if attention_head_dim is None:
             logger.warn(
-                f"It is not recommend to pass `attention_head_dim=None`. Defaulting `attention_head_dim` to `in_channels`: {out_channels}."
+                f"It is not recommend to pass attention_head_dim=None. Defaulting attention_head_dim to in_channels: {out_channels}."
             )
             attention_head_dim = out_channels
 
+        # 각 레이어마다 Resnet과 Attention 블록 추가
         for i in range(num_layers):
             in_channels = in_channels if i == 0 else out_channels
             resnets.append(
@@ -966,6 +1032,7 @@ class AttnDownBlock2D(nn.Module):
         self.attentions = nn.ModuleList(attentions)
         self.resnets = nn.ModuleList(resnets)
 
+        # 다운샘플링 레이어 설정
         if downsample_type == "conv":
             self.downsamplers = nn.ModuleList(
                 [
@@ -1008,12 +1075,14 @@ class AttnDownBlock2D(nn.Module):
 
         output_states = ()
 
+        # Resnet과 Attention 블록을 차례로 적용하여 hidden_states 업데이트
         for resnet, attn in zip(self.resnets, self.attentions):
             cross_attention_kwargs.update({"scale": lora_scale})
             hidden_states = resnet(hidden_states, temb, scale=lora_scale)
             hidden_states = attn(hidden_states, **cross_attention_kwargs)
             output_states = output_states + (hidden_states,)
 
+        # 다운샘플링 적용
         if self.downsamplers is not None:
             for downsampler in self.downsamplers:
                 if self.downsample_type == "resnet":
@@ -1027,6 +1096,7 @@ class AttnDownBlock2D(nn.Module):
 
 
 class CrossAttnDownBlock2D(nn.Module):
+    # Cross-Attention이 포함된 2D 다운샘플 블록 정의
     def __init__(
         self,
         in_channels: int,
@@ -1060,6 +1130,7 @@ class CrossAttnDownBlock2D(nn.Module):
         if isinstance(transformer_layers_per_block, int):
             transformer_layers_per_block = [transformer_layers_per_block] * num_layers
 
+        # 각 레이어마다 Resnet과 Cross-Attention 블록 추가
         for i in range(num_layers):
             in_channels = in_channels if i == 0 else out_channels
             resnets.append(
@@ -1105,6 +1176,7 @@ class CrossAttnDownBlock2D(nn.Module):
         self.attentions = nn.ModuleList(attentions)
         self.resnets = nn.ModuleList(resnets)
 
+        # 다운샘플링 레이어 설정
         if add_downsample:
             self.downsamplers = nn.ModuleList(
                 [
@@ -1134,6 +1206,7 @@ class CrossAttnDownBlock2D(nn.Module):
 
         blocks = list(zip(self.resnets, self.attentions))
         garment_features = []
+        # Resnet과 Cross-Attention 블록을 차례로 적용하여 hidden_states 업데이트
         for i, (resnet, attn) in enumerate(blocks):
             if self.training and self.gradient_checkpointing:
 
@@ -1153,7 +1226,7 @@ class CrossAttnDownBlock2D(nn.Module):
                     temb,
                     **ckpt_kwargs,
                 )
-                hidden_states,out_garment_feat = attn(
+                hidden_states, out_garment_feat = attn(
                     hidden_states,
                     encoder_hidden_states=encoder_hidden_states,
                     cross_attention_kwargs=cross_attention_kwargs,
@@ -1161,10 +1234,12 @@ class CrossAttnDownBlock2D(nn.Module):
                     encoder_attention_mask=encoder_attention_mask,
                     return_dict=False,
                 )
-                hidden_states=hidden_states[0]
+                hidden_states = hidden_states[0]
             else:
+                # Resnet 블록 적용
                 hidden_states = resnet(hidden_states, temb, scale=lora_scale)
-                hidden_states,out_garment_feat = attn(
+                # Cross-Attention 블록 적용
+                hidden_states, out_garment_feat = attn(
                     hidden_states,
                     encoder_hidden_states=encoder_hidden_states,
                     cross_attention_kwargs=cross_attention_kwargs,
@@ -1172,21 +1247,23 @@ class CrossAttnDownBlock2D(nn.Module):
                     encoder_attention_mask=encoder_attention_mask,
                     return_dict=False,
                 )
-                hidden_states=hidden_states[0]
+                hidden_states = hidden_states[0]
             garment_features += out_garment_feat
-            # apply additional residuals to the output of the last pair of resnet and attention blocks
+            # 추가적인 residuals가 있는 경우 마지막 블록에 적용
             if i == len(blocks) - 1 and additional_residuals is not None:
                 hidden_states = hidden_states + additional_residuals
 
             output_states = output_states + (hidden_states,)
 
+        # 다운샘플링 적용
         if self.downsamplers is not None:
             for downsampler in self.downsamplers:
                 hidden_states = downsampler(hidden_states, scale=lora_scale)
 
             output_states = output_states + (hidden_states,)
 
-        return hidden_states, output_states,garment_features
+        return hidden_states, output_states, garment_features
+
 
 
 class DownBlock2D(nn.Module):
